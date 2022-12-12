@@ -7,11 +7,15 @@
 @Documentation: 
     ...
 """
+import os
 import re
-
 from collections import Counter
 
+from jsonargparse import CLI
+
 MaxMRRRank = 10
+
+CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'pprf')
 
 
 def load_reference_from_stream(f):
@@ -168,11 +172,16 @@ def compute_metrics_from_files(path_to_reference, path_to_candidate, perform_che
     return compute_metrics(qids_to_relevant_passageids, qids_to_ranked_candidate_passages)
 
 
-if __name__ == '__main__':
-    path_to_reference = '.\\runs\\eval\\qrels.dev.small.tsv'
-    path_to_candidate = '.\\runs\\two_stage_search.txt'
+def main(
+        path_to_reference: str = os.path.join(CACHE_DIR, "runs", "eval", "qrels.dev.small.tsv"),
+        path_to_candidate: str = os.path.join(CACHE_DIR, "runs", "ance-msmarco-passage_4.txt"),
+):
     metrics = compute_metrics_from_files(path_to_reference, path_to_candidate)
     print('#####################')
     for metric in sorted(metrics):
         print('{}: {}'.format(metric, metrics[metric]))
     print('#####################')
+
+
+if __name__ == '__main__':
+    CLI(main)
