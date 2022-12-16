@@ -105,7 +105,7 @@ def quality_checks_qids(qids_to_relevant_passageids, qids_to_ranked_candidate_pa
         # Remove all zeros from the candidates
         duplicate_pids = set([item for item, count in Counter(qids_to_ranked_candidate_passages[qid]).items() if count > 1])
 
-        if len(duplicate_pids - set([0])) > 0:
+        if len(duplicate_pids - {0}) > 0:
             message = "Cannot rank a passage multiple times for a single query. QID={qid}, PID={pid}".format(
                 qid=qid, pid=list(duplicate_pids)[0])
             allowed = False
@@ -173,9 +173,29 @@ def compute_metrics_from_files(path_to_reference, path_to_candidate, perform_che
 
 
 def main(
-        path_to_reference: str = os.path.join(CACHE_DIR, "runs", "eval", "qrels.dev.small.tsv"),
-        path_to_candidate: str = os.path.join(CACHE_DIR, "runs", "ance-msmarco-passage_4.txt"),
+        candidate_name: str = "msmarco_v1_passage_doc2query-t5_expansions_1-1-ance-msmarco-passage.txt",
+        path_to_candidate: str = None,
+        reference_name: str = "qrels.dev.small.tsv",
+        path_to_reference: str = None,
 ):
+    run_path = os.path.join(CACHE_DIR, "runs")
+
+    if candidate_name is not None:
+        if path_to_candidate is not None:
+            raise ValueError("Can not specify both candidate_name and path_to_candidate")
+        else:
+            path_to_candidate = os.path.join(run_path, candidate_name)
+    elif path_to_candidate is None:
+        raise ValueError("At least specify candidate_name or path_to_candidate")
+
+    if reference_name is not None:
+        if path_to_reference is not None:
+            raise ValueError("Can not specify both reference_name and path_to_reference")
+        else:
+            path_to_reference = os.path.join(run_path, "eval", reference_name)
+    elif path_to_reference is None:
+        raise ValueError("At least specify reference_name or path_to_reference")
+
     metrics = compute_metrics_from_files(path_to_reference, path_to_candidate)
     print('#####################')
     for metric in sorted(metrics):
