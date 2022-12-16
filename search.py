@@ -15,6 +15,7 @@ from pyserini.output_writer import get_output_writer, OutputFormat
 from pyserini.query_iterator import get_query_iterator, TopicsFormat
 from tqdm import tqdm
 
+from pprf.eval import evaluate
 from pprf.pseudo_search import PseudoQuerySearcher
 
 CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'pprf')
@@ -38,6 +39,7 @@ def main(
         device: str = "cpu",
         output_path: str = os.path.join(CACHE_DIR, "runs"),
         output_format: str = OutputFormat.MSMARCO.value,
+        do_eval: bool = True,
 ):
     if pseudo_name is not None:
         if pseudo_index_dir is not None:
@@ -92,6 +94,9 @@ def main(
                 output_writer.write(topic, hits)
 
             batch_hits.clear()
+
+    if do_eval:
+        evaluate(path_to_candidate=output_path)
 
 
 if __name__ == '__main__':

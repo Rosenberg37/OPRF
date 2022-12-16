@@ -18,7 +18,7 @@ from pyserini.index import IndexReader
 from tqdm import tqdm
 from transformers.tokenization_utils import PreTrainedTokenizer
 
-from pprf import CACHE_DIR
+from pprf import DEFAULT_BUFFER_DIR
 
 
 def get_raw_contents(docid: int, index_reader: IndexReader):
@@ -64,7 +64,7 @@ def convert_dataset_to_jsonl(
         output_post_fix = '_' + output_post_fix
 
     output_file_name = f"{dataset_name.split('/')[-1]}{output_post_fix}_{queries_num}"
-    output_path = os.path.join(CACHE_DIR, "runs", output_file_name)
+    output_path = os.path.join(DEFAULT_BUFFER_DIR, "runs", output_file_name)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 

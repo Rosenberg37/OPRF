@@ -9,4 +9,4 @@
 """
 import os
 
-CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'pprf')
+DEFAULT_BUFFER_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'pprf')
