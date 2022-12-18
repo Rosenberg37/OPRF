@@ -38,7 +38,7 @@ def main(
         batch_size: int = cpu_count(),
         device: str = "cpu",
         output_path: str = os.path.join(CACHE_DIR, "runs"),
-        output_format: str = OutputFormat.MSMARCO.value,
+        output_format: str = OutputFormat.TREC.value,
         do_eval: bool = True,
 ):
     if pseudo_name is not None:
@@ -67,7 +67,7 @@ def main(
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
-    output_path = os.path.join(output_path, f"run.{pseudo_name}.{num_pseudo_queries}.{pseudo_encoder_name.split('/')[-1]}.txt")
+    output_path = os.path.join(output_path, f"run.{pseudo_name}.{num_pseudo_queries}.{pseudo_encoder_name.split('/')[-1]}.{topic_name}.txt")
     tag = output_path[:-4]
     output_writer = get_output_writer(output_path, OutputFormat(output_format), 'w', max_hits=num_return_hits, tag=tag, topics=topics)
 
@@ -96,7 +96,7 @@ def main(
             batch_hits.clear()
 
     if do_eval:
-        evaluate(path_to_candidate=output_path)
+        evaluate(topic_name=topic_name, path_to_candidate=output_path)
 
 
 if __name__ == '__main__':
