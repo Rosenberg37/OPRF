@@ -15,7 +15,7 @@ from jsonargparse import CLI
 
 CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'pprf')
 ARG_DICT = {
-    'msmarco-passage-dev-subset': ['-c', '-mrecall.1000', '-mmap', 'recip_rank', 'msmarco-passage-dev-subset'],
+    'msmarco-passage-dev-subset': ['-c', '-M', '10', '-m', 'recip_rank', '-m', 'recall.1000', 'msmarco-passage-dev-subset'],
     'dl19-passage': ['-c', '-l', '2', '-m', 'map', '-m', 'ndcg_cut.10', '-l', '2', '-m', 'recall.1000', 'dl19-passage'],
     'dl20': ['-c', '-l', '2', '-m', 'map', '-m', 'ndcg_cut.10', '-l', '2', '-m', 'recall.1000', 'dl20-passage'],
 }

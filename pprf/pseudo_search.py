@@ -98,9 +98,11 @@ class PseudoQuerySearcher:
         self.cache_dir = DEFAULT_BUFFER_DIR if buffer_dir is None else buffer_dir
         index_name = os.path.split(doc_index)[-1]
         self.cache_dir = os.path.join(self.cache_dir, index_name, encoder_name)
+        if pseudo_prf_depth is not None:
+            self.cache_dir = os.path.join(self.cache_dir, pseudo_prf_method)
+
         if not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir)
-
         self.cache = Cache(self.cache_dir, eviction_policy='none')
 
     def batch_search(
