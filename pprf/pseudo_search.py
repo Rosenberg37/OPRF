@@ -14,11 +14,11 @@ from typing import List
 
 from diskcache import Cache
 from math import exp
-from pyserini.search import AnceQueryEncoder, DenseSearchResult, DenseVectorAncePrf, DenseVectorAveragePrf, DenseVectorRocchioPrf, FaissSearcher
+from pyserini.search import AnceQueryEncoder, DenseVectorAncePrf, DenseVectorAveragePrf, DenseVectorRocchioPrf
 from pyserini.search.lucene import LuceneSearcher
 
 from pprf import DEFAULT_BUFFER_DIR
-from pprf.dense_search import FaissBatchSearcher, init_query_encoder
+from pprf.dense_search import FaissBatchSearcher, init_query_encoder, SearchResult
 
 
 class PseudoQuerySearcher:
@@ -75,7 +75,7 @@ class PseudoQuerySearcher:
         #     self.searcher_doc.switch_to_gpu(int(id))
 
         # Check PRF Flag
-        if pseudo_prf_depth > 0 and type(self.searcher_doc) == FaissSearcher:
+        if pseudo_prf_depth > 0 and type(self.searcher_doc) is FaissBatchSearcher:
             self.PRF_FLAG = True
             self.prf_method = pseudo_prf_method
             self.prf_depth = pseudo_prf_depth
@@ -98,7 +98,7 @@ class PseudoQuerySearcher:
         self.cache_dir = DEFAULT_BUFFER_DIR if buffer_dir is None else buffer_dir
         index_name = os.path.split(doc_index)[-1]
         self.cache_dir = os.path.join(self.cache_dir, index_name, encoder_name)
-        if pseudo_prf_depth is not None:
+        if pseudo_prf_depth > 0:
             self.cache_dir = os.path.join(self.cache_dir, pseudo_prf_method)
 
         if not os.path.exists(self.cache_dir):
@@ -110,6 +110,7 @@ class PseudoQuerySearcher:
             batch_queries: List[str],
             batch_qids: List[str],
             num_pseudo_queries: int = 4,
+            add_query_to_pseudo: bool = False,
             num_return_hits: int = 1000,
             threads: int = 1,
     ) -> list:
@@ -127,12 +128,18 @@ class PseudoQuerySearcher:
             Number of hits to return.
         threads : int
             Maximum number of threads to use.
+        add_query_to_pseudo: 
+            Whether add self to the original pseudo queries.
 
         Returns
         -------
 
         """
         batch_pseudo_hits = self.searcher_pseudo.batch_search(batch_queries, batch_qids, num_pseudo_queries, threads)
+        if add_query_to_pseudo:
+            for contents, qid in zip(batch_queries, batch_qids):
+                max_score = max(hit.score for hit in batch_pseudo_hits[qid])
+                batch_pseudo_hits[qid].append(SearchResult(qid, max_score, contents))
 
         pseudo_ids_texts, pseudo_results = dict(), dict()
         for pseudo_hits in batch_pseudo_hits.values():
@@ -142,7 +149,7 @@ class PseudoQuerySearcher:
                     if result is not None and len(result) >= num_return_hits:
                         pseudo_results[hit.docid] = result[:num_return_hits]
                     else:
-                        pseudo_ids_texts[hit.docid] = json.loads(hit.raw)['contents']
+                        pseudo_ids_texts[hit.docid] = json.loads(hit.raw)['contents'] if hit.contents is None else hit.contents
 
         if len(pseudo_ids_texts) > 0:
             pseudo_ids, pseudo_texts = zip(*pseudo_ids_texts.items())
@@ -155,7 +162,6 @@ class PseudoQuerySearcher:
                 else:
                     prf_embs_q = self.prfRule.get_batch_prf_q_emb(pseudo_ids, q_embs, prf_candidates)
                 search_results = self.searcher_doc.batch_search(prf_embs_q, pseudo_ids, k=num_return_hits, threads=threads)
-                search_results = [(id_, search_results[id_]) for id_ in pseudo_ids]
             else:
                 search_results = self.searcher_doc.batch_search(pseudo_texts, pseudo_ids, num_return_hits, threads)
 
@@ -186,7 +192,7 @@ class PseudoQuerySearcher:
                 doc_hits[doc_id] = numerator / denominator * len(pseudo_doc_hits)
 
             doc_hits = sorted([(v, k) for k, v in doc_hits.items()], reverse=True)[:num_return_hits]
-            doc_hits = [DenseSearchResult(str(idx), score) for score, idx in doc_hits]
+            doc_hits = [SearchResult(str(idx), score, None) for score, idx in doc_hits]
             final_results.append((query_id, doc_hits))
 
         return final_results

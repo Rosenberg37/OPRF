@@ -7,12 +7,20 @@
 @Documentation: 
     ...
 """
-from typing import Dict, List, Tuple, Union
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple, Union
 
 import faiss
 import numpy as np
 import torch
 from pyserini.search import AnceQueryEncoder, AutoQueryEncoder, BprQueryEncoder, DenseSearchResult, DkrrDprQueryEncoder, DprQueryEncoder, FaissSearcher, PRFDenseSearchResult, TctColBertQueryEncoder
+
+
+@dataclass
+class SearchResult:
+    docid: str
+    score: float
+    contents: Optional[str]
 
 
 class AnceQueryBatchEncoder(AnceQueryEncoder):
@@ -40,8 +48,8 @@ class FaissBatchSearcher(FaissSearcher):
 
     def batch_search(
             self,
-            queries: Union[List[str], np.ndarray],
-            q_ids: List[str],
+            queries: Union[Tuple[str], np.ndarray],
+            q_ids: Tuple[str],
             k: int = 10,
             threads: int = 1,
             return_vector: bool = False
@@ -68,7 +76,7 @@ class FaissBatchSearcher(FaissSearcher):
             corresponding lists of search results as the values.
             Or returns a tuple with ndarray of query vectors and a dictionary of PRF Dense Search Results with vectors
         """
-        q_embs = self.query_encoder.batch_encode(queries)
+        q_embs = self.query_encoder.batch_encode(queries) if type(queries) is tuple else queries
         faiss.omp_set_num_threads(threads)
         if return_vector:
             d, i, v = self.index.search_and_reconstruct(q_embs, k)

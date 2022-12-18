@@ -29,6 +29,7 @@ def main(
         pseudo_name: str = 'msmarco_v1_passage_doc2query-t5_expansions_5',
         pseudo_index_dir: str = None,
         num_pseudo_queries: int = 2,
+        add_query_to_pseudo: bool = False,
         pseudo_encoder_name: str = "lucene",
         pseudo_prf_depth: int = 0,
         pseudo_prf_method: str = 'avg',
@@ -49,6 +50,36 @@ def main(
         output_format: str = OutputFormat.TREC.value,
         do_eval: bool = True,
 ):
+    """
+    
+    :param topic_name: 
+    :param query_rm3: 
+    :param query_rocchio: 
+    :param query_rocchio_use_negative: 
+    :param pseudo_name: 
+    :param pseudo_index_dir: 
+    :param num_pseudo_queries: 
+    :param add_query_to_pseudo: 
+    :param pseudo_encoder_name: 
+    :param pseudo_prf_depth: 
+    :param pseudo_prf_method: 
+    :param pseudo_rocchio_alpha: 
+    :param pseudo_rocchio_beta: 
+    :param pseudo_rocchio_gamma: 
+    :param pseudo_rocchio_topk: 
+    :param pseudo_rocchio_bottomk: 
+    :param pseudo_sparse_index: 
+    :param pseudo_tokenizer: 
+    :param pseudo_ance_prf_encoder: 
+    :param doc_index: 
+    :param num_return_hits: 
+    :param threads: 
+    :param batch_size: 
+    :param device: 
+    :param output_path: 
+    :param output_format: 
+    :param do_eval: 
+    """
     if pseudo_name is not None:
         if pseudo_index_dir is not None:
             raise ValueError("Can not specify both pseudo_name and pseudo_index")
@@ -97,6 +128,7 @@ def main(
                     batch_queries,
                     batch_queries_ids,
                     num_pseudo_queries=num_pseudo_queries,
+                    add_query_to_pseudo=add_query_to_pseudo,
                     num_return_hits=num_return_hits,
                     threads=threads
                 )
