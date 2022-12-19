@@ -13,7 +13,8 @@ import sys
 
 from jsonargparse import CLI
 
-CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'pprf')
+from source import DEFAULT_CACHE_DIR
+
 ARG_DICT = {
     'msmarco-passage-dev-subset': ['-c', '-M', '10', '-m', 'recip_rank', '-m', 'recall.1000', 'msmarco-passage-dev-subset'],
     'dl19-passage': ['-c', '-l', '2', '-m', 'map', '-m', 'ndcg_cut.10', '-l', '2', '-m', 'recall.1000', 'dl19-passage'],
@@ -26,7 +27,7 @@ def evaluate(
         path_to_candidate: str = None,
         topic_name: str = None,
 ):
-    run_path = os.path.join(CACHE_DIR, "runs")
+    run_path = os.path.join(DEFAULT_CACHE_DIR, "runs")
 
     if candidate_name is not None:
         if path_to_candidate is not None:
@@ -43,4 +44,4 @@ def evaluate(
 
 
 if __name__ == '__main__':
-    CLI(evaluate())
+    CLI(evaluate)

@@ -1,26 +1,18 @@
 # -*- coding: UTF-8 -*-
 """
 @Project:   PPRF 
-@File:      dense.py
+@File:      faiss.py
 @Author:    Rosenberg
-@Date:      2022/12/16 16:27 
+@Date:      2022/12/19 18:32 
 @Documentation: 
     ...
 """
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 import faiss
 import numpy as np
 import torch
 from pyserini.search import AnceQueryEncoder, AutoQueryEncoder, BprQueryEncoder, DenseSearchResult, DkrrDprQueryEncoder, DprQueryEncoder, FaissSearcher, PRFDenseSearchResult, TctColBertQueryEncoder
-
-
-@dataclass
-class SearchResult:
-    docid: str
-    score: float
-    contents: Optional[str]
 
 
 class AnceQueryBatchEncoder(AnceQueryEncoder):
