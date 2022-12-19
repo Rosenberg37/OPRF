@@ -41,6 +41,7 @@ def main(
         pseudo_sparse_index: str = None,
         pseudo_tokenizer: str = None,
         pseudo_ance_prf_encoder: str = None,
+        aggregation: str = "softmax_sum_with_count",
         doc_index: str = 'msmarco-v1-passage-full',
         num_return_hits: int = 1000,
         threads: int = cpu_count(),
@@ -52,33 +53,34 @@ def main(
 ):
     """
     
-    :param topic_name: 
-    :param query_rm3: 
-    :param query_rocchio: 
-    :param query_rocchio_use_negative: 
-    :param pseudo_name: 
-    :param pseudo_index_dir: 
-    :param num_pseudo_queries: 
-    :param add_query_to_pseudo: 
-    :param pseudo_encoder_name: 
-    :param pseudo_prf_depth: 
-    :param pseudo_prf_method: 
-    :param pseudo_rocchio_alpha: 
-    :param pseudo_rocchio_beta: 
-    :param pseudo_rocchio_gamma: 
-    :param pseudo_rocchio_topk: 
-    :param pseudo_rocchio_bottomk: 
-    :param pseudo_sparse_index: 
-    :param pseudo_tokenizer: 
-    :param pseudo_ance_prf_encoder: 
-    :param doc_index: 
-    :param num_return_hits: 
-    :param threads: 
-    :param batch_size: 
-    :param device: 
-    :param output_path: 
-    :param output_format: 
-    :param do_eval: 
+    :param topic_name: Name of topics.
+    :param query_rm3: whether the rm3 algorithm used for the first stage search.
+    :param query_rocchio: whether the rocchio algorithm used for the first stage search.
+    :param query_rocchio_use_negative: whether the rocchio algorithm with negative used for the first stage search.
+    :param pseudo_name: index name of the candidate pseudo queries
+    :param pseudo_index_dir: index path to the candidate pseudo queries.
+    :param num_pseudo_queries: how many pseudo query used for second stage
+    :param add_query_to_pseudo: whether add query into pseudo query for search
+    :param pseudo_encoder_name: Path to query encoder pytorch checkpoint or hgf encoder model name
+    :param pseudo_prf_depth: Specify how many passages are used for PRF, 0: Simple retrieval with no PRF, > 0: perform PRF
+    :param pseudo_prf_method: Choose PRF methods, avg or rocchio
+    :param pseudo_rocchio_alpha: The alpha parameter to control the contribution from the query vector
+    :param pseudo_rocchio_beta: The beta parameter to control the contribution from the average vector of the positive PRF passages
+    :param pseudo_rocchio_gamma: The gamma parameter to control the contribution from the average vector of the negative PRF passages
+    :param pseudo_rocchio_topk: Set topk passages as positive PRF passages for rocchio
+    :param pseudo_rocchio_bottomk: Set bottomk passages as negative PRF passages for rocchio, 0: do not use negatives prf passages.
+    :param pseudo_sparse_index: The path to sparse index containing the passage contents
+    :param pseudo_tokenizer: Path to a hgf tokenizer name or path
+    :param pseudo_ance_prf_encoder: The path or name to ANCE-PRF model checkpoint
+    :param aggregation: the way of aggregate hits from different pseudo queries
+    :param doc_index: the index of the candidate documents
+    :param num_return_hits: how many hits will be returned
+    :param threads: maximum threads to use during search
+    :param batch_size: batch size used for the batch search.
+    :param device: the device the whole search procedure will on
+    :param output_path: the path where the run file will be outputted
+    :param output_format: the format where the run file will be
+    :param do_eval: do evaluation step after search or not
     """
     if pseudo_name is not None:
         if pseudo_index_dir is not None:
@@ -107,6 +109,7 @@ def main(
         pseudo_sparse_index=pseudo_sparse_index,
         pseudo_tokenizer=pseudo_tokenizer,
         pseudo_ance_prf_encoder=pseudo_ance_prf_encoder,
+        aggregation=aggregation,
         device=device
     )
 
@@ -114,7 +117,11 @@ def main(
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
-    output_path = os.path.join(output_path, f"run.{pseudo_name}.{num_pseudo_queries}.{pseudo_encoder_name.split('/')[-1]}.{topic_name}.txt")
+    pseudo_encoder_full_name = pseudo_encoder_name.split('/')[-1]
+    if pseudo_prf_depth is not None:
+        pseudo_encoder_full_name += "-" + pseudo_prf_method
+    run_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.{pseudo_encoder_full_name}.{aggregation}.txt"
+    output_path = os.path.join(output_path, run_name)
     tag = output_path[:-4]
     output_writer = get_output_writer(output_path, OutputFormat(output_format), 'w', max_hits=num_return_hits, tag=tag, topics=topics)
 

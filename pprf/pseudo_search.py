@@ -10,7 +10,8 @@
 import json
 import os
 import os.path
-from typing import List
+from functools import partial
+from typing import Dict, List, Tuple
 
 from diskcache import Cache
 from math import exp
@@ -18,11 +19,43 @@ from pyserini.search import AnceQueryEncoder, DenseVectorAncePrf, DenseVectorAve
 from pyserini.search.lucene import LuceneSearcher
 
 from pprf import DEFAULT_BUFFER_DIR
-from pprf.dense_search import FaissBatchSearcher, init_query_encoder, SearchResult
+from pprf.dense_search import AnceQueryBatchEncoder, FaissBatchSearcher, init_query_encoder, SearchResult
+
+
+def softmax_sum(pseudo_doc_hits: List[Tuple], length_correct: bool):
+    numerator, denominator = 0, 0
+    for s in pseudo_doc_hits:
+        exp_pseudo_score = exp(s[1])
+        numerator += s[0] * exp_pseudo_score
+        denominator += exp_pseudo_score
+    result = numerator / denominator
+    if length_correct:
+        result *= len(pseudo_doc_hits)
+    return result
+
+
+def sum_doc(pseudo_doc_hits: List[Tuple]):
+    return sum(s[0] for s in pseudo_doc_hits)
+
+
+def sum_pseudo(pseudo_doc_hits: List[Tuple]):
+    return sum(s[1] for s in pseudo_doc_hits)
+
+
+def sum_total(pseudo_doc_hits: List[Tuple]):
+    return sum(sum(s) for s in pseudo_doc_hits)
 
 
 class PseudoQuerySearcher:
     DEFAULT_BUFFER_DIR = os.path.join(os.path.expanduser('~'), ".cache", "pprf")
+    AGGREGATE_DICT = {
+        "softmax_sum_with_count": partial(softmax_sum, length_correct=True),
+        "softmax_sum": partial(softmax_sum, length_correct=False),
+        "sum_doc": sum_doc,
+        "sum_pseudo": sum_pseudo,
+        "sum_total": sum_total,
+        "count": len,
+    }
 
     def __init__(
             self,
@@ -42,6 +75,7 @@ class PseudoQuerySearcher:
             pseudo_sparse_index: str = None,
             pseudo_tokenizer: str = None,
             pseudo_ance_prf_encoder: str = None,
+            aggregation: str = "softmax_sum_with_count",
             buffer_dir: str = None,
             device: str = "cpu",
     ):
@@ -85,7 +119,7 @@ class PseudoQuerySearcher:
             elif pseudo_prf_method.lower() == 'rocchio':
                 self.prfRule = DenseVectorRocchioPrf(pseudo_rocchio_alpha, pseudo_rocchio_beta, pseudo_rocchio_gamma, pseudo_rocchio_topk, pseudo_rocchio_bottomk)
             # ANCE-PRF is using a new query encoder, so the input to DenseVectorAncePrf is different
-            elif pseudo_prf_method.lower() == 'ance-prf' and type(self.pseudo_encoder) == AnceQueryEncoder:
+            elif pseudo_prf_method.lower() == 'ance-prf' and type(self.pseudo_encoder) == AnceQueryBatchEncoder:
                 if os.path.exists(pseudo_sparse_index):
                     self.sparse_searcher = LuceneSearcher(pseudo_sparse_index)
                 else:
@@ -94,6 +128,8 @@ class PseudoQuerySearcher:
                 self.prfRule = DenseVectorAncePrf(self.prf_query_encoder, self.sparse_searcher)
         else:
             self.PRF_FLAG = False
+
+        self.aggregate = self.AGGREGATE_DICT[aggregation]
 
         self.cache_dir = DEFAULT_BUFFER_DIR if buffer_dir is None else buffer_dir
         index_name = os.path.split(doc_index)[-1]
@@ -112,8 +148,9 @@ class PseudoQuerySearcher:
             num_pseudo_queries: int = 4,
             add_query_to_pseudo: bool = False,
             num_return_hits: int = 1000,
+            return_pseudo_hits: bool = False,
             threads: int = 1,
-    ) -> list:
+    ) -> [List, Tuple[List, Dict]]:
         """Search the collection concurrently for multiple queries, using multiple threads.
 
         Parameters
@@ -130,6 +167,8 @@ class PseudoQuerySearcher:
             Maximum number of threads to use.
         add_query_to_pseudo: 
             Whether add self to the original pseudo queries.
+        return_pseudo_hits:
+            whether return the pseudo queries hit in the first stage.
 
         Returns
         -------
@@ -176,23 +215,23 @@ class PseudoQuerySearcher:
 
             for pseudo_hit in pseudo_hits:
                 pseudo_id = pseudo_hit.docid
-                pseudo_score = exp(pseudo_hit.score)
+                pseudo_score = pseudo_hit.score
                 for doc_hit in pseudo_results[pseudo_id]:
                     doc_score, doc_id = doc_hit
                     if doc_id not in doc_hits:
                         doc_hits[doc_id] = [(doc_score, pseudo_score)]
                     else:
                         doc_hits[doc_id].append((doc_score, pseudo_score))
+                    # Each final document correspond to a set of pseudo queries which hit it
 
             for doc_id, pseudo_doc_hits in doc_hits.items():
-                numerator, denominator = 0, 0
-                for s in pseudo_doc_hits:
-                    numerator += s[0] * s[1]
-                    denominator += s[1]
-                doc_hits[doc_id] = numerator / denominator * len(pseudo_doc_hits)
-
+                doc_hits[doc_id] = self.aggregate(pseudo_doc_hits)
             doc_hits = sorted([(v, k) for k, v in doc_hits.items()], reverse=True)[:num_return_hits]
+
             doc_hits = [SearchResult(str(idx), score, None) for score, idx in doc_hits]
             final_results.append((query_id, doc_hits))
 
-        return final_results
+        if return_pseudo_hits:
+            return final_results, batch_pseudo_hits
+        else:
+            return final_results
