@@ -19,13 +19,12 @@ from diskcache import Cache
 from jsonargparse import CLI
 from pyserini.output_writer import TrecWriter
 from pyserini.query_iterator import get_query_iterator, TopicsFormat
-from pyserini.search import DenseVectorAncePrf, DenseVectorAveragePrf, DenseVectorRocchioPrf, LuceneSearcher
+from pyserini.search import DenseVectorAveragePrf, DenseVectorRocchioPrf, LuceneSearcher
 from tqdm import tqdm
 
 from source import DEFAULT_CACHE_DIR
 from source.eval import evaluate
-from source.utils import AnceQueryBatchEncoder, FaissBatchSearcher, init_query_encoder
-from source.utils.aggregate import max_doc, max_pseudo, max_total, softmax_sum, sum_doc, sum_pseudo, sum_total
+from source.utils import FaissBatchSearcher, init_query_encoder, max_doc, max_pseudo, max_total, softmax_sum, sum_doc, sum_pseudo, sum_total
 
 
 @dataclass
@@ -63,9 +62,6 @@ class PseudoQuerySearcher:
             pseudo_rocchio_gamma: float = 0.1,
             pseudo_rocchio_topk: int = 3,
             pseudo_rocchio_bottomk: int = 0,
-            pseudo_sparse_index: str = None,
-            pseudo_tokenizer: str = None,
-            pseudo_ance_prf_encoder: str = None,
             aggregation: str = "softmax_sum_with_count",
             buffer_dir: str = None,
             device: str = "cpu",
@@ -102,21 +98,21 @@ class PseudoQuerySearcher:
         # Check PRF Flag
         if pseudo_prf_depth > 0 and type(self.searcher_doc) is FaissBatchSearcher:
             self.PRF_FLAG = True
-            self.prf_method = pseudo_prf_method
             self.prf_depth = pseudo_prf_depth
 
             if pseudo_prf_method.lower() == 'avg':
                 self.prfRule = DenseVectorAveragePrf()
             elif pseudo_prf_method.lower() == 'rocchio':
-                self.prfRule = DenseVectorRocchioPrf(pseudo_rocchio_alpha, pseudo_rocchio_beta, pseudo_rocchio_gamma, pseudo_rocchio_topk, pseudo_rocchio_bottomk)
+                self.prfRule = DenseVectorRocchioPrf(
+                    pseudo_rocchio_alpha,
+                    pseudo_rocchio_beta,
+                    pseudo_rocchio_gamma,
+                    pseudo_rocchio_topk,
+                    pseudo_rocchio_bottomk
+                )
             # ANCE-PRF is using a new query encoder, so the input to DenseVectorAncePrf is different
-            elif pseudo_prf_method.lower() == 'ance-prf' and type(self.pseudo_encoder) == AnceQueryBatchEncoder:
-                if os.path.exists(pseudo_sparse_index):
-                    self.sparse_searcher = LuceneSearcher(pseudo_sparse_index)
-                else:
-                    self.sparse_searcher = LuceneSearcher.from_prebuilt_index(pseudo_sparse_index)
-                self.prf_query_encoder = AnceQueryBatchEncoder(encoder_dir=pseudo_ance_prf_encoder, tokenizer_name=pseudo_tokenizer, device=device)
-                self.prfRule = DenseVectorAncePrf(self.prf_query_encoder, self.sparse_searcher)
+            else:
+                raise ValueError("Unexpected pseudo_prf_method.")
         else:
             self.PRF_FLAG = False
 
@@ -168,12 +164,20 @@ class PseudoQuerySearcher:
         -------
 
         """
-        batch_pseudo_hits = self.searcher_pseudo.batch_search(batch_queries, batch_qids, num_pseudo_queries, threads)
-        if add_query_to_pseudo:
+        # Get pseudo queries
+        if num_pseudo_queries <= 0:
+            print("Warning, num_pseudo_queries less or equal zero, set pseudo query directly to be query.\n")
+            batch_pseudo_hits = dict()
             for contents, qid in zip(batch_queries, batch_qids):
-                max_score = sum(hit.score for hit in batch_pseudo_hits[qid])
-                batch_pseudo_hits[qid].append(SearchResult(qid, max_score, contents))
+                batch_pseudo_hits[qid] = [SearchResult(qid, 100, contents)]
+        else:
+            batch_pseudo_hits = self.searcher_pseudo.batch_search(batch_queries, batch_qids, num_pseudo_queries, threads)
+            if add_query_to_pseudo:
+                for contents, qid in zip(batch_queries, batch_qids):
+                    query_score = sum(hit.score for hit in batch_pseudo_hits[qid])
+                    batch_pseudo_hits[qid].append(SearchResult(qid, query_score, contents))
 
+        # Read cache or leave for search
         pseudo_ids_texts, pseudo_results = dict(), dict()
         for pseudo_hits in batch_pseudo_hits.values():
             for hit in pseudo_hits:
@@ -184,25 +188,23 @@ class PseudoQuerySearcher:
                     else:
                         pseudo_ids_texts[hit.docid] = json.loads(hit.raw)['contents'] if hit.contents is None else hit.contents
 
+        # Search for un-cased pseudo queries
         if len(pseudo_ids_texts) > 0:
             pseudo_ids, pseudo_texts = zip(*pseudo_ids_texts.items())
 
             if self.PRF_FLAG:
                 q_embs, prf_candidates = self.searcher_doc.batch_search(pseudo_texts, pseudo_ids, k=self.prf_depth, return_vector=True)
-                # ANCE-PRF input is different, do not need query embeddings
-                if self.prf_method.lower() == 'ance-prf':
-                    prf_embs_q = self.prfRule.get_batch_prf_q_emb(pseudo_texts, pseudo_ids, prf_candidates)
-                else:
-                    prf_embs_q = self.prfRule.get_batch_prf_q_emb(pseudo_ids, q_embs, prf_candidates)
+                prf_embs_q = self.prfRule.get_batch_prf_q_emb(pseudo_ids, q_embs, prf_candidates)
                 search_results = self.searcher_doc.batch_search(prf_embs_q, pseudo_ids, k=num_return_hits, threads=threads)
             else:
-                search_results = self.searcher_doc.batch_search(pseudo_texts, pseudo_ids, num_return_hits, threads)
+                search_results = self.searcher_doc.batch_search(pseudo_texts, pseudo_ids, k=num_return_hits, threads=threads)
 
             for pseudo_id, pseudo_doc_hits in search_results.items():
                 pseudo_doc_hits = [(hit.score, hit.docid) for hit in pseudo_doc_hits]
                 pseudo_results[pseudo_id] = pseudo_doc_hits
                 self.cache.set(pseudo_id, pseudo_doc_hits)
 
+        # Aggregate and generate final results
         final_results = list()
         for query_id, pseudo_hits in batch_pseudo_hits.items():
             doc_hits = dict()
@@ -253,9 +255,6 @@ def main(
         pseudo_rocchio_gamma: float = 0.1,
         pseudo_rocchio_topk: int = 3,
         pseudo_rocchio_bottomk: int = 0,
-        pseudo_sparse_index: str = None,
-        pseudo_tokenizer: str = None,
-        pseudo_ance_prf_encoder: str = None,
         aggregation: str = "softmax_sum_with_count",
         doc_index: str = 'msmarco-v1-passage-full',
         num_return_hits: int = 1000,
@@ -284,9 +283,6 @@ def main(
     :param pseudo_rocchio_gamma: The gamma parameter to control the contribution from the average vector of the negative PRF passages
     :param pseudo_rocchio_topk: Set topk passages as positive PRF passages for rocchio
     :param pseudo_rocchio_bottomk: Set bottomk passages as negative PRF passages for rocchio, 0: do not use negatives prf passages.
-    :param pseudo_sparse_index: The path to sparse index containing the passage contents
-    :param pseudo_tokenizer: Path to a hgf tokenizer name or path
-    :param pseudo_ance_prf_encoder: The path or name to ANCE-PRF model checkpoint
     :param aggregation: the way of aggregate hits from different pseudo queries
     :param doc_index: the index of the candidate documents
     :param num_return_hits: how many hits will be returned
@@ -320,9 +316,6 @@ def main(
         pseudo_rocchio_gamma=pseudo_rocchio_gamma,
         pseudo_rocchio_topk=pseudo_rocchio_topk,
         pseudo_rocchio_bottomk=pseudo_rocchio_bottomk,
-        pseudo_sparse_index=pseudo_sparse_index,
-        pseudo_tokenizer=pseudo_tokenizer,
-        pseudo_ance_prf_encoder=pseudo_ance_prf_encoder,
         aggregation=aggregation,
         device=device
     )
