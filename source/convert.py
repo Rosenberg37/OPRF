@@ -10,6 +10,7 @@
 import hashlib
 import json
 import os
+from typing import List, Union
 
 from datasets import load_dataset
 from jsonargparse import CLI
@@ -19,36 +20,42 @@ from source import DEFAULT_CACHE_DIR
 
 
 def convert_dataset_to_jsonl(
-        dataset_name: str = 'castorini/msmarco_v1_passage_doc2query-t5_expansions',
+        dataset_name: Union[str, List[str]] = 'castorini/msmarco_v1_passage_doc2query-t5_expansions',
         queries_num: int = 5,
-        output_post_fix: str = '',
+        output_name: str = None,
 ):
-    if output_post_fix and output_post_fix[0] != '_':
-        output_post_fix = '_' + output_post_fix
+    if output_name is None:
+        if type(dataset_name) is str:
+            output_name = f"{dataset_name.split('/')[-1]}_{queries_num}"
+        else:
+            output_name = f"multi_{queries_num}"
 
-    output_file_name = f"{dataset_name.split('/')[-1]}{output_post_fix}_{queries_num}"
-    output_path = os.path.join(DEFAULT_CACHE_DIR, "runs", output_file_name)
+    output_path = os.path.join(DEFAULT_CACHE_DIR, "runs", "pseudo_queries", output_name)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
     seen = set()
-    dataset = load_dataset(dataset_name)['train']
-    with open(f"{output_path}/{output_file_name}{output_post_fix}.json", "w") as f:
-        for docid_queries in tqdm(dataset):
-            docid = docid_queries['id']
-            queries = docid_queries['predicted_queries']
+    if type(dataset_name) is str:
+        dataset_name = [dataset_name]
 
-            if queries_num != -1:
-                queries = queries[:queries_num]
+    with open(os.path.join(output_path, f"{output_name}.json"), "w") as f:
+        for name in dataset_name:
+            dataset = load_dataset(name)['train']
+            for docid_queries in tqdm(dataset):
+                docid = docid_queries['id']
+                queries = docid_queries['predicted_queries']
 
-            for qid, query in enumerate(queries):
-                query_hash = hashlib.md5(query.encode()).digest()
-                if query_hash not in seen:
-                    f.write(json.dumps({
-                        "id": f"D{docid}#{qid}",
-                        "contents": query
-                    }) + '\n')
-                    seen.add(query_hash)
+                if queries_num != -1:
+                    queries = queries[:queries_num]
+
+                for qid, query in enumerate(queries):
+                    query_hash = hashlib.md5(query.encode()).digest()
+                    if query_hash not in seen:
+                        f.write(json.dumps({
+                            "id": f"D{docid}#{qid}",
+                            "contents": query
+                        }) + '\n')
+                        seen.add(query_hash)
 
 
 if __name__ == '__main__':

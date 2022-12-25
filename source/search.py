@@ -7,6 +7,7 @@
 @Documentation: 
     ...
 """
+import json
 import os
 import os.path
 from functools import partial
@@ -20,7 +21,7 @@ from tqdm import tqdm
 
 from source import DEFAULT_CACHE_DIR
 from source.eval import evaluate
-from source.utils.aggregate import max_doc, max_pseudo, max_total, softmax_sum, sum_doc, sum_product, sum_pseudo, sum_total
+from source.utils.aggregate import max_doc, max_product, max_pseudo, max_total, softmax_sum, sum_doc, sum_product, sum_pseudo, sum_total
 from source.utils.faiss import FaissBatchSearcher
 from source.utils.lucene import LuceneBatchSearcher, SearchResult
 
@@ -36,6 +37,7 @@ class PseudoQuerySearcher:
         "max_doc": max_doc,
         "max_pseudo": max_pseudo,
         "max_total": max_total,
+        "max_prod": max_product,
         "count": len,
     }
 
@@ -61,6 +63,7 @@ class PseudoQuerySearcher:
             device: str = "cpu",
     ):
         self.searcher_pseudo = LuceneBatchSearcher(pseudo_index_dir, query_normalize_score)
+        self.searcher_pseudo.set_bm25(2.56, 0.59)
         if query_rm3:
             self.searcher_pseudo.set_rm3()
         if query_rocchio:
@@ -122,7 +125,7 @@ class PseudoQuerySearcher:
             num_return_hits: int = 1000,
             return_pseudo_hits: bool = False,
             threads: int = 1,
-    ) -> [List, Tuple[List, Dict]]:
+    ) -> Union[List, Tuple[List, Dict]]:
         """Search the collection concurrently for multiple queries, using multiple threads.
 
         Parameters
@@ -241,6 +244,7 @@ def main(
         device: str = "cpu",
         output_path: str = os.path.join(DEFAULT_CACHE_DIR, "runs"),
         do_eval: bool = True,
+        log_pseudo_hits: bool = False,
 ):
     """
 
@@ -271,6 +275,7 @@ def main(
     :param device: the device the whole search procedure will on
     :param output_path: the path where the run file will be outputted
     :param do_eval: do evaluation step after search or not
+    :param log_pseudo_hits: write pseudo query hit results or not.
     """
     if pseudo_name is not None:
         if pseudo_index_dir is not None:
@@ -314,37 +319,55 @@ def main(
         pseudo_encoder_full_name = "hybrid"
 
     run_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.{pseudo_encoder_full_name}.{aggregation}.txt"
-    output_path = os.path.join(output_path, run_name)
-    output_writer = TrecWriter(output_path, 'w', max_hits=num_return_hits, tag=output_path[:-4], topics=topics)
+    run_path = os.path.join(output_path, run_name)
+    output_writer = TrecWriter(run_path, 'w', max_hits=num_return_hits, tag=output_path[:-4], topics=topics)
+
+    if log_pseudo_hits:
+        log_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.log"
+        log_path = os.path.join(output_path, "log")
+        if not os.path.exists(log_path):
+            os.makedirs(log_path)
+        log_file = open(os.path.join(log_path, log_name), mode='w')
+    else:
+        log_file = None
 
     with output_writer:
         batch_queries, batch_queries_ids = list(), list()
         for index, (query_id, text) in enumerate(tqdm(query_iterator)):
             batch_queries_ids.append(str(query_id))
             batch_queries.append(text)
+
             if (index + 1) % batch_size == 0 or index == topics_length - 1:
-                batch_hits = searcher.batch_search(
-                    batch_queries,
-                    batch_queries_ids,
+                batch_hits, batch_pseudo_hits = searcher.batch_search(
+                    batch_queries, batch_queries_ids,
                     num_pseudo_queries=num_pseudo_queries,
                     add_query_to_pseudo=add_query_to_pseudo,
                     num_pseudo_return_hits=num_pseudo_return_hits,
                     num_return_hits=num_return_hits,
-                    threads=threads
+                    threads=threads,
+                    return_pseudo_hits=True,
                 )
+
+                for topic, hits in batch_hits:
+                    output_writer.write(topic, hits)
+
+                if log_file is not None:
+                    for topic, hits in batch_pseudo_hits.items():
+                        query = batch_queries[batch_queries_ids.index(topic)]
+                        dump_dict = {
+                            query: [{
+                                "id": hit.docid,
+                                "score": hit.score,
+                                "contents": hit.contents
+                            } for hit in hits]
+                        }
+                        log_file.write(json.dumps(dump_dict, indent=4) + '\n')
 
                 batch_queries_ids.clear()
                 batch_queries.clear()
-            else:
-                continue
-
-            for topic, hits in batch_hits:
-                output_writer.write(topic, hits)
-
-            batch_hits.clear()
 
     if do_eval:
-        evaluate(topic_name=topic_name, path_to_candidate=output_path)
+        evaluate(topic_name=topic_name, path_to_candidate=run_path)
 
 
 if __name__ == '__main__':
