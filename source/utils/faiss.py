@@ -7,12 +7,19 @@
 @Documentation: 
     ...
 """
-from typing import Dict, List, Tuple, Union
+
+import os
+from typing import Dict, List, Union
 
 import faiss
 import numpy as np
 import torch
-from pyserini.search import AnceQueryEncoder, AutoQueryEncoder, BprQueryEncoder, DenseSearchResult, DkrrDprQueryEncoder, DprQueryEncoder, FaissSearcher, PRFDenseSearchResult, TctColBertQueryEncoder
+from diskcache import Cache
+from pyserini.search import AnceQueryEncoder, AutoQueryEncoder, BprQueryEncoder, DenseVectorAveragePrf, DenseVectorRocchioPrf, DkrrDprQueryEncoder, DprQueryEncoder, FaissSearcher, \
+    TctColBertQueryEncoder
+from pyserini.util import download_prebuilt_index
+
+from source.utils import normalize_results, SearchResult
 
 
 class AnceQueryBatchEncoder(AnceQueryEncoder):
@@ -34,59 +41,6 @@ class TctColBertQueryBatchEncoder(TctColBertQueryEncoder):
         outputs = self.model(**inputs)
         embeddings = torch.mean(outputs.last_hidden_state[:, 4:, :], dim=1)
         return embeddings.detach().cpu().numpy()
-
-
-class FaissBatchSearcher(FaissSearcher):
-
-    def batch_search(
-            self,
-            queries: Union[Tuple[str], np.ndarray],
-            q_ids: Tuple[str],
-            k: int = 10,
-            threads: int = 1,
-            return_vector: bool = False
-    ) -> Union[Dict[str, List[DenseSearchResult]], Tuple[np.ndarray, Dict[str, List[PRFDenseSearchResult]]]]:
-        """
-
-        Parameters
-        ----------
-        queries : Union[List[str], np.ndarray]
-            List of query texts or list of query embeddings
-        q_ids : List[str]
-            List of corresponding query ids.
-        k : int
-            Number of hits to return.
-        threads : int
-            Maximum number of threads to use.
-        return_vector : bool
-            Return the results with vectors
-
-        Returns
-        -------
-        Union[Dict[str, List[DenseSearchResult]], Tuple[np.ndarray, Dict[str, List[PRFDenseSearchResult]]]]
-            Either returns a dictionary holding the search results, with the query ids as keys and the
-            corresponding lists of search results as the values.
-            Or returns a tuple with ndarray of query vectors and a dictionary of PRF Dense Search Results with vectors
-        """
-        q_embs = self.query_encoder.batch_encode(queries) if type(queries) is tuple else queries
-        faiss.omp_set_num_threads(threads)
-        if return_vector:
-            d, i, v = self.index.search_and_reconstruct(q_embs, k)
-            return q_embs, {key: [PRFDenseSearchResult(self.docids[idx], score, vector)
-                                  for score, idx, vector in zip(distances, indexes, vectors) if idx != -1]
-                            for key, distances, indexes, vectors in zip(q_ids, d, i, v)}
-        else:
-            d, i = self.index.search(q_embs, k)
-            return {key: [DenseSearchResult(self.docids[idx], score)
-                          for score, idx in zip(distances, indexes) if idx != -1]
-                    for key, distances, indexes in zip(q_ids, d, i)}
-
-    def switch_to_gpu(self, id: int):
-        res = faiss.StandardGpuResources()
-        self.index = faiss.index_cpu_to_gpu(res, id, self.index)
-
-    def switch_to_IVF(self):
-        self.index = faiss.IndexIVFFlat(self.index, self.dimension, 256)
 
 
 def init_query_encoder(encoder: str, device: str):
@@ -124,3 +78,129 @@ def init_query_encoder(encoder: str, device: str):
             kwargs.update(dict(pooling='mean', l2_norm=True))
 
         return encoder_class(**kwargs)
+
+
+class FaissBatchSearcher(FaissSearcher):
+    def __init__(
+            self,
+            prebuilt_index_name: str,
+            encoder_name: str,
+            device: str,
+            prf_depth: int = 0,
+            prf_method: str = 'avg',
+            rocchio_alpha: float = 0.9,
+            rocchio_beta: float = 0.1,
+            rocchio_gamma: float = 0.1,
+            rocchio_topk: int = 3,
+            rocchio_bottomk: int = 0,
+            normalize_score: bool = False,
+            cache_dir: str = None
+    ):
+        query_encoder = init_query_encoder(encoder_name, device)
+        print(f'Attempting to initialize pre-built index {prebuilt_index_name}.')
+        index_dir = download_prebuilt_index(prebuilt_index_name)
+        print(f'Initializing {prebuilt_index_name}...')
+        super().__init__(index_dir, query_encoder, prebuilt_index_name)
+
+        # Check PRF Flag
+        if prf_depth > 0:
+            self.PRF_FLAG = True
+            self.prf_depth = prf_depth
+
+            if prf_method.lower() == 'avg':
+                self.prfRule = DenseVectorAveragePrf()
+            elif prf_method.lower() == 'rocchio':
+                self.prfRule = DenseVectorRocchioPrf(
+                    rocchio_alpha,
+                    rocchio_beta,
+                    rocchio_gamma,
+                    rocchio_topk,
+                    rocchio_bottomk
+                )
+            else:
+                raise ValueError("Unexpected pseudo_prf_method.")
+        else:
+            self.PRF_FLAG = False
+
+        self.cache_dir = os.path.join(cache_dir, encoder_name)
+        if prf_depth > 0:
+            self.cache_dir = os.path.join(cache_dir, prf_method)
+        if not os.path.exists(self.cache_dir):
+            os.makedirs(self.cache_dir)
+        print(f"Use case at {self.cache_dir}")
+        self.cache = Cache(self.cache_dir, eviction_policy='none')
+
+        self.normalize_score = normalize_score
+
+        # self.searcher_doc.switch_to_IVF()
+        # id = device.split(':')[-1]
+        # if id == 'cuda':
+        #     self.searcher_doc.switch_to_gpu(0)
+        # elif id != 'cpu':
+        #     self.searcher_doc.switch_to_gpu(int(id))
+
+    def batch_search(
+            self,
+            queries: Union[List[str], np.ndarray],
+            q_ids: List[str], k: int = 10,
+            threads: int = 1,
+            return_vector: bool = False
+    ) -> Dict[str, List[tuple]]:
+        """
+
+        Parameters
+        ----------
+        queries : Union[List[str], np.ndarray]
+            List of query texts or list of query embeddings
+        q_ids : List[str]
+            List of corresponding query ids.
+        k : int
+            Number of hits to return.
+        threads : int
+            Maximum number of threads to use.
+        return_vector : bool
+            Return the results with vectors
+
+        Returns
+        -------
+        Dict[str, list[tuple]]
+            return a dict contains key to list of SearchResult
+        """
+
+        # Read cache or leave for search
+        results = dict()
+        search_queries, search_q_ids = list(), list()
+        for q_id, query in zip(q_ids, queries):
+            result = self.cache.get(q_id, None)
+            if result is not None and len(result) >= k:
+                results[q_id] = result
+            else:
+                search_q_ids.append(q_id)
+                search_queries.append(query)
+
+        # Search for un-cased pseudo queries
+        if len(search_q_ids) > 0:
+            if self.PRF_FLAG:
+                q_embs, prf_candidates = super().batch_search(search_queries, search_q_ids, k=self.prf_depth, return_vector=True)
+                prf_embs_q = self.prfRule.get_batch_prf_q_emb(search_q_ids, q_embs, prf_candidates)
+                search_results = super().batch_search(prf_embs_q, search_q_ids, k=k, threads=threads)
+            else:
+                q_embs = self.query_encoder.batch_encode(queries) if type(queries) is tuple else queries
+                search_results = super().batch_search(q_embs, search_q_ids, k=k, threads=threads)
+
+            for id, hits in search_results.items():
+                hits = [SearchResult(hit.docid, hit.score, None) for hit in hits]
+                results[id] = hits
+                self.cache.set(id, hits)
+
+        if self.normalize_score:
+            results = normalize_results(results)
+
+        return results
+
+    def switch_to_gpu(self, id: int):
+        res = faiss.StandardGpuResources()
+        self.index = faiss.index_cpu_to_gpu(res, id, self.index)
+
+    def switch_to_IVF(self):
+        self.index = faiss.IndexIVFFlat(self.index, self.dimension, 256)

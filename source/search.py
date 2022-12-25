@@ -7,31 +7,22 @@
 @Documentation: 
     ...
 """
-import json
 import os
 import os.path
-from dataclasses import dataclass
 from functools import partial
 from multiprocessing import cpu_count
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple, Union
 
-from diskcache import Cache
 from jsonargparse import CLI
 from pyserini.output_writer import TrecWriter
 from pyserini.query_iterator import get_query_iterator, TopicsFormat
-from pyserini.search import DenseVectorAveragePrf, DenseVectorRocchioPrf, LuceneSearcher
 from tqdm import tqdm
 
 from source import DEFAULT_CACHE_DIR
 from source.eval import evaluate
-from source.utils import FaissBatchSearcher, init_query_encoder, max_doc, max_pseudo, max_total, softmax_sum, sum_doc, sum_pseudo, sum_total
-
-
-@dataclass
-class SearchResult:
-    docid: str
-    score: float
-    contents: Optional[str]
+from source.utils.aggregate import max_doc, max_pseudo, max_total, softmax_sum, sum_doc, sum_product, sum_pseudo, sum_total
+from source.utils.faiss import FaissBatchSearcher
+from source.utils.lucene import LuceneBatchSearcher, SearchResult
 
 
 class PseudoQuerySearcher:
@@ -41,6 +32,7 @@ class PseudoQuerySearcher:
         "sum_doc": sum_doc,
         "sum_pseudo": sum_pseudo,
         "sum_total": sum_total,
+        "sum_prod": sum_product,
         "max_doc": max_doc,
         "max_pseudo": max_pseudo,
         "max_total": max_total,
@@ -50,11 +42,12 @@ class PseudoQuerySearcher:
     def __init__(
             self,
             pseudo_index_dir: str,
-            doc_index: str,
+            doc_index: Union[str, List[str]],
             query_rm3: bool = False,
             query_rocchio: bool = False,
             query_rocchio_use_negative: bool = False,
-            pseudo_encoder_name: str = "lucene",
+            query_normalize_score: bool = False,
+            pseudo_encoder_name: Union[List[str], str] = "lucene",
             pseudo_prf_depth: int = 0,
             pseudo_prf_method: str = 'avg',
             pseudo_rocchio_alpha: float = 0.9,
@@ -62,11 +55,12 @@ class PseudoQuerySearcher:
             pseudo_rocchio_gamma: float = 0.1,
             pseudo_rocchio_topk: int = 3,
             pseudo_rocchio_bottomk: int = 0,
+            pseudo_normalize_score: bool = False,
             aggregation: str = "softmax_sum_with_count",
-            buffer_dir: str = None,
+            cache_dir: str = None,
             device: str = "cpu",
     ):
-        self.searcher_pseudo = LuceneSearcher(pseudo_index_dir)
+        self.searcher_pseudo = LuceneBatchSearcher(pseudo_index_dir, query_normalize_score)
         if query_rm3:
             self.searcher_pseudo.set_rm3()
         if query_rocchio:
@@ -75,58 +69,48 @@ class PseudoQuerySearcher:
             else:
                 self.searcher_pseudo.set_rocchio()
 
-        encoder_name = pseudo_encoder_name.split('/')[-1]
-        if encoder_name == "lucene":
-            self.pseudo_encoder = None
-            self.searcher_doc: LuceneSearcher = LuceneSearcher.from_prebuilt_index(doc_index)
-        else:
-            self.pseudo_encoder = init_query_encoder(pseudo_encoder_name, device)
-            if os.path.exists(doc_index):
-                # create searcher from index directory
-                self.searcher_doc = FaissBatchSearcher(doc_index, self.pseudo_encoder)
-            else:
-                # create searcher from prebuilt index name
-                self.searcher_doc = FaissBatchSearcher.from_prebuilt_index(doc_index, self.pseudo_encoder)
-
-        # self.searcher_doc.switch_to_IVF()
-        # id = device.split(':')[-1]
-        # if id == 'cuda':
-        #     self.searcher_doc.switch_to_gpu(0)
-        # elif id != 'cpu':
-        #     self.searcher_doc.switch_to_gpu(int(id))
-
-        # Check PRF Flag
-        if pseudo_prf_depth > 0 and type(self.searcher_doc) is FaissBatchSearcher:
-            self.PRF_FLAG = True
-            self.prf_depth = pseudo_prf_depth
-
-            if pseudo_prf_method.lower() == 'avg':
-                self.prfRule = DenseVectorAveragePrf()
-            elif pseudo_prf_method.lower() == 'rocchio':
-                self.prfRule = DenseVectorRocchioPrf(
-                    pseudo_rocchio_alpha,
-                    pseudo_rocchio_beta,
-                    pseudo_rocchio_gamma,
-                    pseudo_rocchio_topk,
-                    pseudo_rocchio_bottomk
-                )
-            # ANCE-PRF is using a new query encoder, so the input to DenseVectorAncePrf is different
-            else:
-                raise ValueError("Unexpected pseudo_prf_method.")
-        else:
-            self.PRF_FLAG = False
-
         self.aggregate = self.AGGREGATE_DICT[aggregation]
 
-        self.cache_dir = DEFAULT_CACHE_DIR if buffer_dir is None else buffer_dir
-        index_name = os.path.split(doc_index)[-1]
-        self.cache_dir = os.path.join(self.cache_dir, index_name, encoder_name)
-        if pseudo_prf_depth > 0:
-            self.cache_dir = os.path.join(self.cache_dir, pseudo_prf_method)
+        if cache_dir is None:
+            cache_dir = DEFAULT_CACHE_DIR
 
-        if not os.path.exists(self.cache_dir):
-            os.makedirs(self.cache_dir)
-        self.cache = Cache(self.cache_dir, eviction_policy='none')
+            cache_dir = os.path.join(cache_dir, "search_cache", "doc")
+
+        if pseudo_encoder_name == "lucene" and type(doc_index) is str:
+            self.searcher_doc: LuceneBatchSearcher = LuceneBatchSearcher.from_prebuilt_index(doc_index)
+        elif type(pseudo_encoder_name) is str and type(doc_index) is str:
+            cache_dir = os.path.join(cache_dir, os.path.split(doc_index)[-1])
+            self.searcher_doc: FaissBatchSearcher = FaissBatchSearcher(
+                prebuilt_index_name=doc_index,
+                encoder_name=pseudo_encoder_name,
+                device=device,
+                prf_depth=pseudo_prf_depth,
+                prf_method=pseudo_prf_method,
+                rocchio_alpha=pseudo_rocchio_alpha,
+                rocchio_beta=pseudo_rocchio_beta,
+                rocchio_gamma=pseudo_rocchio_gamma,
+                rocchio_topk=pseudo_rocchio_topk,
+                rocchio_bottomk=pseudo_rocchio_bottomk,
+                normalize_score=pseudo_normalize_score,
+                cache_dir=cache_dir
+            )
+        elif type(pseudo_encoder_name) is list and type(doc_index) is list:
+            self.searcher_doc: List[FaissBatchSearcher] = [FaissBatchSearcher(
+                prebuilt_index_name=index_name,
+                encoder_name=encoder_name,
+                device=device,
+                prf_depth=pseudo_prf_depth,
+                prf_method=pseudo_prf_method,
+                rocchio_alpha=pseudo_rocchio_alpha,
+                rocchio_beta=pseudo_rocchio_beta,
+                rocchio_gamma=pseudo_rocchio_gamma,
+                rocchio_topk=pseudo_rocchio_topk,
+                rocchio_bottomk=pseudo_rocchio_bottomk,
+                normalize_score=pseudo_normalize_score,
+                cache_dir=os.path.join(cache_dir, os.path.split(index_name)[-1])
+            ) for index_name, encoder_name in zip(doc_index, pseudo_encoder_name)]
+        else:
+            raise ValueError("Unexpected pseudo_encoder_name and doc_index")
 
     def batch_search(
             self,
@@ -169,7 +153,7 @@ class PseudoQuerySearcher:
             print("Warning, num_pseudo_queries less or equal zero, set pseudo query directly to be query.\n")
             batch_pseudo_hits = dict()
             for contents, qid in zip(batch_queries, batch_qids):
-                batch_pseudo_hits[qid] = [SearchResult(qid, 100, contents)]
+                batch_pseudo_hits[qid] = [SearchResult(qid, 1, contents)]
         else:
             batch_pseudo_hits = self.searcher_pseudo.batch_search(batch_queries, batch_qids, num_pseudo_queries, threads)
             if add_query_to_pseudo:
@@ -177,32 +161,23 @@ class PseudoQuerySearcher:
                     query_score = sum(hit.score for hit in batch_pseudo_hits[qid])
                     batch_pseudo_hits[qid].append(SearchResult(qid, query_score, contents))
 
-        # Read cache or leave for search
+        # Read cache or search
         pseudo_ids_texts, pseudo_results = dict(), dict()
         for pseudo_hits in batch_pseudo_hits.values():
             for hit in pseudo_hits:
                 if hit.docid not in pseudo_results:
-                    result = self.cache.get(hit.docid, None)
-                    if result is not None and len(result) >= num_pseudo_return_hits:
-                        pseudo_results[hit.docid] = result[:num_pseudo_return_hits]
-                    else:
-                        pseudo_ids_texts[hit.docid] = json.loads(hit.raw)['contents'] if hit.contents is None else hit.contents
+                    pseudo_ids_texts[hit.docid] = hit.contents
+        pseudo_ids, pseudo_texts = zip(*pseudo_ids_texts.items())
 
-        # Search for un-cased pseudo queries
-        if len(pseudo_ids_texts) > 0:
-            pseudo_ids, pseudo_texts = zip(*pseudo_ids_texts.items())
-
-            if self.PRF_FLAG:
-                q_embs, prf_candidates = self.searcher_doc.batch_search(pseudo_texts, pseudo_ids, k=self.prf_depth, return_vector=True)
-                prf_embs_q = self.prfRule.get_batch_prf_q_emb(pseudo_ids, q_embs, prf_candidates)
-                search_results = self.searcher_doc.batch_search(prf_embs_q, pseudo_ids, k=num_return_hits, threads=threads)
-            else:
-                search_results = self.searcher_doc.batch_search(pseudo_texts, pseudo_ids, k=num_return_hits, threads=threads)
-
-            for pseudo_id, pseudo_doc_hits in search_results.items():
-                pseudo_doc_hits = [(hit.score, hit.docid) for hit in pseudo_doc_hits]
-                pseudo_results[pseudo_id] = pseudo_doc_hits
-                self.cache.set(pseudo_id, pseudo_doc_hits)
+        if type(self.searcher_doc) is list:
+            pseudo_results = dict()
+            for searcher in self.searcher_doc:
+                results = searcher.batch_search(pseudo_texts, pseudo_ids, k=num_pseudo_return_hits, threads=threads)
+                for key, hits in results.items():
+                    current_hits = pseudo_results.get(key, [])
+                    pseudo_results[key] = current_hits + hits
+        else:
+            pseudo_results = self.searcher_doc.batch_search(pseudo_texts, pseudo_ids, k=num_pseudo_return_hits, threads=threads)
 
         # Aggregate and generate final results
         final_results = list()
@@ -213,7 +188,8 @@ class PseudoQuerySearcher:
                 pseudo_id = pseudo_hit.docid
                 pseudo_score = pseudo_hit.score
                 for doc_hit in pseudo_results[pseudo_id]:
-                    doc_score, doc_id = doc_hit
+                    doc_score = doc_hit.score
+                    doc_id = doc_hit.docid
                     if doc_id not in doc_hits:
                         doc_hits[doc_id] = [(doc_score, pseudo_score)]
                     else:
@@ -225,7 +201,7 @@ class PseudoQuerySearcher:
             doc_hits = sorted([(v, k) for k, v in doc_hits.items()], reverse=True)
 
             if len(doc_hits) < num_return_hits:
-                print(f"Warning, query of id {query_id} has less than {num_return_hits} candidate passages.\n")
+                print(f"Warning, query of id {query_id} has less than {num_return_hits} candidate passages.")
             doc_hits = doc_hits[:num_return_hits]
 
             doc_hits = [SearchResult(str(idx), score, None) for score, idx in doc_hits]
@@ -242,12 +218,13 @@ def main(
         query_rm3: bool = False,
         query_rocchio: bool = False,
         query_rocchio_use_negative: bool = False,
+        query_normalize_score: bool = False,
         pseudo_name: str = 'msmarco_v1_passage_doc2query-t5_expansions_5',
         pseudo_index_dir: str = None,
         num_pseudo_queries: int = 2,
         add_query_to_pseudo: bool = False,
         num_pseudo_return_hits: int = 1000,
-        pseudo_encoder_name: str = "lucene",
+        pseudo_encoder_name: Union[str, List[str]] = "lucene",
         pseudo_prf_depth: int = 0,
         pseudo_prf_method: str = 'avg',
         pseudo_rocchio_alpha: float = 0.9,
@@ -255,8 +232,9 @@ def main(
         pseudo_rocchio_gamma: float = 0.1,
         pseudo_rocchio_topk: int = 3,
         pseudo_rocchio_bottomk: int = 0,
+        pseudo_normalize_score: bool = False,
         aggregation: str = "softmax_sum_with_count",
-        doc_index: str = 'msmarco-v1-passage-full',
+        doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
         num_return_hits: int = 1000,
         threads: int = cpu_count(),
         batch_size: int = cpu_count(),
@@ -270,6 +248,7 @@ def main(
     :param query_rm3: whether the rm3 algorithm used for the first stage search.
     :param query_rocchio: whether the rocchio algorithm used for the first stage search.
     :param query_rocchio_use_negative: whether the rocchio algorithm with negative used for the first stage search.
+    :param query_normalize_score: Whether normalize the score of pseudo query searcher
     :param pseudo_name: index name of the candidate pseudo queries
     :param pseudo_index_dir: index path to the candidate pseudo queries.
     :param num_pseudo_queries: how many pseudo query used for second stage
@@ -283,6 +262,7 @@ def main(
     :param pseudo_rocchio_gamma: The gamma parameter to control the contribution from the average vector of the negative PRF passages
     :param pseudo_rocchio_topk: Set topk passages as positive PRF passages for rocchio
     :param pseudo_rocchio_bottomk: Set bottomk passages as negative PRF passages for rocchio, 0: do not use negatives prf passages.
+    :param pseudo_normalize_score: Whether normalize the score of document searcher
     :param aggregation: the way of aggregate hits from different pseudo queries
     :param doc_index: the index of the candidate documents
     :param num_return_hits: how many hits will be returned
@@ -308,6 +288,7 @@ def main(
         query_rm3=query_rm3,
         query_rocchio=query_rocchio,
         query_rocchio_use_negative=query_rocchio_use_negative,
+        query_normalize_score=query_normalize_score,
         pseudo_encoder_name=pseudo_encoder_name,
         pseudo_prf_depth=pseudo_prf_depth,
         pseudo_prf_method=pseudo_prf_method,
@@ -316,6 +297,7 @@ def main(
         pseudo_rocchio_gamma=pseudo_rocchio_gamma,
         pseudo_rocchio_topk=pseudo_rocchio_topk,
         pseudo_rocchio_bottomk=pseudo_rocchio_bottomk,
+        pseudo_normalize_score=pseudo_normalize_score,
         aggregation=aggregation,
         device=device
     )
@@ -324,13 +306,16 @@ def main(
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
-    pseudo_encoder_full_name = pseudo_encoder_name.split('/')[-1]
-    if pseudo_prf_depth is not None:
-        pseudo_encoder_full_name += "-" + pseudo_prf_method
+    if type(pseudo_encoder_name) is str:
+        pseudo_encoder_full_name = pseudo_encoder_name.split('/')[-1]
+        if pseudo_prf_depth is not None:
+            pseudo_encoder_full_name += "-" + pseudo_prf_method
+    else:
+        pseudo_encoder_full_name = "hybrid"
+
     run_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.{pseudo_encoder_full_name}.{aggregation}.txt"
     output_path = os.path.join(output_path, run_name)
-    tag = output_path[:-4]
-    output_writer = TrecWriter(output_path, 'w', max_hits=num_return_hits, tag=tag, topics=topics)
+    output_writer = TrecWriter(output_path, 'w', max_hits=num_return_hits, tag=output_path[:-4], topics=topics)
 
     with output_writer:
         batch_queries, batch_queries_ids = list(), list()

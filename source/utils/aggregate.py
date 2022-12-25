@@ -36,6 +36,10 @@ def sum_total(pseudo_doc_hits: List[Tuple]):
     return sum(s[0] + s[1] for s in pseudo_doc_hits)
 
 
+def sum_product(pseudo_doc_hits: List[Tuple]):
+    return sum(s[0] * s[1] for s in pseudo_doc_hits)
+
+
 def max_doc(pseudo_doc_hits: List[Tuple]):
     return max(s[0] for s in pseudo_doc_hits)
 
