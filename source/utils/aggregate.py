@@ -7,6 +7,7 @@
 @Documentation: 
     ...
 """
+from functools import partial
 from typing import List, Tuple
 
 from math import exp
@@ -54,3 +55,18 @@ def max_total(pseudo_doc_hits: List[Tuple]):
 
 def max_product(pseudo_doc_hits: List[Tuple]):
     return max(s[0] * s[1] for s in pseudo_doc_hits)
+
+
+AGGREGATE_DICT = {
+    "softmax_sum_with_count": partial(softmax_sum, length_correct=True),
+    "softmax_sum": partial(softmax_sum, length_correct=False),
+    "sum_doc": sum_doc,
+    "sum_pseudo": sum_pseudo,
+    "sum_total": sum_total,
+    "sum_prod": sum_product,
+    "max_doc": max_doc,
+    "max_pseudo": max_pseudo,
+    "max_total": max_total,
+    "max_prod": max_product,
+    "count": len,
+}

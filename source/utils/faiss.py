@@ -9,6 +9,7 @@
 """
 
 import os
+from functools import partial
 from typing import Dict, List, Union
 
 import faiss
@@ -19,7 +20,8 @@ from pyserini.search import AnceQueryEncoder, AutoQueryEncoder, BprQueryEncoder,
     TctColBertQueryEncoder
 from pyserini.util import download_prebuilt_index
 
-from source.utils import normalize_results, SearchResult
+from source.utils import SearchResult
+from source.utils.normalize import NORMALIZE_DICT
 
 
 class AnceQueryBatchEncoder(AnceQueryEncoder):
@@ -93,7 +95,9 @@ class FaissBatchSearcher(FaissSearcher):
             rocchio_gamma: float = 0.1,
             rocchio_topk: int = 3,
             rocchio_bottomk: int = 0,
-            normalize_score: bool = False,
+            normalize_method: str = None,
+            normalize_scale: float = 1,
+            normalize_shift: float = 0,
             cache_dir: str = None
     ):
         query_encoder = init_query_encoder(encoder_name, device)
@@ -130,7 +134,9 @@ class FaissBatchSearcher(FaissSearcher):
         print(f"Use case at {self.cache_dir}")
         self.cache = Cache(self.cache_dir, eviction_policy='none')
 
-        self.normalize_score = normalize_score
+        self.normalize = None
+        if normalize_method is not None:
+            self.normalize = partial(NORMALIZE_DICT[normalize_method], scale=normalize_scale, shift=normalize_shift)
 
         # self.searcher_doc.switch_to_IVF()
         # id = device.split(':')[-1]
@@ -193,8 +199,8 @@ class FaissBatchSearcher(FaissSearcher):
                 results[id] = hits
                 self.cache.set(id, hits)
 
-        if self.normalize_score:
-            results = normalize_results(results)
+        if self.normalize:
+            results = self.normalize(results)
 
         return results
 
