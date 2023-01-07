@@ -8,33 +8,35 @@
     ...
 """
 import json
-from functools import partial
 from typing import Dict, List
 
-from pyserini.search import JQueryGenerator, LuceneSearcher
+from pyserini.index import IndexReader
+from pyserini.search import LuceneSearcher
+from pyserini.search.lucene.__main__ import set_bm25_parameters
+from pyserini.util import download_prebuilt_index
 
 from source.utils import SearchResult
-from source.utils.normalize import NORMALIZE_DICT
-
-DENSE_TO_SPARSE = {
-    "msmarco-passage-tct_colbert-v2-hnp-bf": "msmarco-v1-passage-d2q-t5-docvectors"
-}
 
 
-class LuceneBatchSearcher(LuceneSearcher):
+class LuceneBatchSearcher:
     def __init__(
             self,
             index_dir: str,
-            add_query_to_pseudo: bool = False,
-            normalize_method: str = None,
-            normalize_scale: float = 1,
-            normalize_shift: float = 0
+            rm3: bool = False,
+            rocchio: bool = False,
+            rocchio_use_negative: bool = False,
     ):
-        super().__init__(index_dir)
-        self.normalize = None
-        if normalize_method is not None:
-            self.normalize = partial(NORMALIZE_DICT[normalize_method], scale=normalize_scale, shift=normalize_shift)
-        self.add_query_to_pseudo = add_query_to_pseudo
+        self.searcher = LuceneSearcher(index_dir)
+        set_bm25_parameters(self.searcher, None, 2.56, 0.59)
+
+        if rm3:
+            self.searcher.set_rm3()
+
+        if rocchio:
+            if rocchio_use_negative:
+                self.searcher.set_rocchio(gamma=0.15, use_negative=True)
+            else:
+                self.searcher.set_rocchio()
 
     def batch_search(
             self,
@@ -42,12 +44,8 @@ class LuceneBatchSearcher(LuceneSearcher):
             qids: List[str],
             k: int = 10,
             threads: int = 1,
-            query_generator: JQueryGenerator = None,
-            fields=None
+            add_query_to_pseudo: bool = False,
     ) -> Dict[str, List[SearchResult]]:
-        if fields is None:
-            fields = dict()
-
         if k <= 0:
             print("Warning, num_pseudo_queries less or equal zero, set pseudo query directly to be query.\n")
 
@@ -55,16 +53,37 @@ class LuceneBatchSearcher(LuceneSearcher):
             for contents, qid in zip(queries, qids):
                 batch_hits[qid] = [SearchResult(qid, 1., contents)]
         else:
-            batch_hits = super().batch_search(queries, qids, k, threads, query_generator, fields)
+            batch_hits = self.searcher.batch_search(queries, qids, k, threads)
             for key, hits in batch_hits.items():
-                batch_hits[key] = [SearchResult(hit.docid, hit.score, json.loads(hit.raw)['contents']) for hit in hits]
+                batch_hits[key] = [
+                    SearchResult(
+                        hit.docid, hit.score,
+                        json.loads(hit.raw)['contents'] if hit.raw else None
+                    ) for hit in hits
+                ]
 
-            if self.add_query_to_pseudo:
+            if add_query_to_pseudo:
                 for contents, qid in zip(queries, qids):
-                    query_score = sum(hit.score for hit in batch_hits[qid])
+                    query_score = max(hit.score for hit in batch_hits[qid])
                     batch_hits[qid].append(SearchResult(qid, query_score, contents))
 
-        if self.normalize:
-            batch_hits = self.normalize(batch_hits)
-
         return batch_hits
+
+    @classmethod
+    def from_prebuilt_index(
+            cls,
+            prebuilt_index_name: str,
+            rm3: bool = False,
+            rocchio: bool = False,
+            rocchio_use_negative: bool = False,
+    ):
+        try:
+            index_dir = download_prebuilt_index(prebuilt_index_name)
+        except ValueError as e:
+            print(str(e))
+            return None
+
+        index_reader = IndexReader(index_dir)
+        index_reader.validate(prebuilt_index_name)
+
+        return cls(index_dir, rm3, rocchio, rocchio_use_negative)

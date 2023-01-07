@@ -9,19 +9,15 @@
 """
 
 import os
-from functools import partial
 from typing import Dict, List, Union
 
-import faiss
 import numpy as np
 import torch
 from diskcache import Cache
 from pyserini.search import AnceQueryEncoder, AutoQueryEncoder, BprQueryEncoder, DenseVectorAveragePrf, DenseVectorRocchioPrf, DkrrDprQueryEncoder, DprQueryEncoder, FaissSearcher, \
     TctColBertQueryEncoder
-from pyserini.util import download_prebuilt_index
 
 from source.utils import SearchResult
-from source.utils.normalize import NORMALIZE_DICT
 
 
 class AnceQueryBatchEncoder(AnceQueryEncoder):
@@ -82,7 +78,7 @@ def init_query_encoder(encoder: str, device: str):
         return encoder_class(**kwargs)
 
 
-class FaissBatchSearcher(FaissSearcher):
+class FaissBatchSearcher:
     def __init__(
             self,
             prebuilt_index_name: str,
@@ -95,18 +91,16 @@ class FaissBatchSearcher(FaissSearcher):
             rocchio_gamma: float = 0.1,
             rocchio_topk: int = 3,
             rocchio_bottomk: int = 0,
-            normalize_method: str = None,
-            normalize_scale: float = 1,
-            normalize_shift: float = 0,
             cache_dir: str = None
     ):
-        query_encoder = init_query_encoder(encoder_name, device)
-        print(f'Attempting to initialize pre-built index {prebuilt_index_name}.')
-        index_dir = download_prebuilt_index(prebuilt_index_name)
-        print(f'Initializing {prebuilt_index_name}...')
-        super().__init__(index_dir, query_encoder, prebuilt_index_name)
+        self.device = device
+        self.encoder_name = encoder_name
+        self.prebuilt_index_name = prebuilt_index_name
+        self.query_encoder = None
+        self.searcher = None
 
         # Check PRF Flag
+        self.PRF_FLAG = False
         if prf_depth > 0:
             self.PRF_FLAG = True
             self.prf_depth = prf_depth
@@ -123,20 +117,15 @@ class FaissBatchSearcher(FaissSearcher):
                 )
             else:
                 raise ValueError("Unexpected pseudo_prf_method.")
-        else:
-            self.PRF_FLAG = False
 
-        self.cache_dir = os.path.join(cache_dir, encoder_name)
-        if prf_depth > 0:
-            self.cache_dir = os.path.join(cache_dir, prf_method)
+            self.cache_dir = os.path.join(cache_dir, encoder_name, prf_method)
+        else:
+            self.cache_dir = os.path.join(cache_dir, encoder_name)
+
+        # Set up cache
         if not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir)
-        print(f"Use case at {self.cache_dir}")
         self.cache = Cache(self.cache_dir, eviction_policy='none')
-
-        self.normalize = None
-        if normalize_method is not None:
-            self.normalize = partial(NORMALIZE_DICT[normalize_method], scale=normalize_scale, shift=normalize_shift)
 
         # self.searcher_doc.switch_to_IVF()
         # id = device.split(':')[-1]
@@ -145,13 +134,17 @@ class FaissBatchSearcher(FaissSearcher):
         # elif id != 'cpu':
         #     self.searcher_doc.switch_to_gpu(int(id))
 
+    def init_searcher(self):
+        self.query_encoder = init_query_encoder(self.encoder_name, self.device)
+        self.searcher = FaissSearcher.from_prebuilt_index(self.prebuilt_index_name, self.query_encoder)
+
     def batch_search(
             self,
             queries: Union[List[str], np.ndarray],
-            q_ids: List[str], k: int = 10,
+            q_ids: List[str],
+            k: int = 10,
             threads: int = 1,
-            return_vector: bool = False
-    ) -> Dict[str, List[tuple]]:
+    ) -> Dict[str, List[SearchResult]]:
         """
 
         Parameters
@@ -164,8 +157,6 @@ class FaissBatchSearcher(FaissSearcher):
             Number of hits to return.
         threads : int
             Maximum number of threads to use.
-        return_vector : bool
-            Return the results with vectors
 
         Returns
         -------
@@ -174,39 +165,96 @@ class FaissBatchSearcher(FaissSearcher):
         """
 
         # Read cache or leave for search
-        results = dict()
+        batch_hits = dict()
         search_queries, search_q_ids = list(), list()
         for q_id, query in zip(q_ids, queries):
             result = self.cache.get(q_id, None)
             if result is not None and len(result) >= k:
-                results[q_id] = result
+                batch_hits[q_id] = result
             else:
                 search_q_ids.append(q_id)
                 search_queries.append(query)
 
         # Search for un-cased pseudo queries
         if len(search_q_ids) > 0:
-            if self.PRF_FLAG:
-                q_embs, prf_candidates = super().batch_search(search_queries, search_q_ids, k=self.prf_depth, return_vector=True)
-                prf_embs_q = self.prfRule.get_batch_prf_q_emb(search_q_ids, q_embs, prf_candidates)
-                search_results = super().batch_search(prf_embs_q, search_q_ids, k=k, threads=threads)
-            else:
-                q_embs = self.query_encoder.batch_encode(queries) if type(queries) is tuple else queries
-                search_results = super().batch_search(q_embs, search_q_ids, k=k, threads=threads)
+            if self.searcher is None or self.query_encoder is None:
+                self.init_searcher()
 
-            for id, hits in search_results.items():
+            q_embs = self.query_encoder.batch_encode(search_queries) if type(search_queries) is tuple else search_queries
+            if self.PRF_FLAG:
+                q_embs, prf_candidates = self.searcher.batch_search(q_embs, search_q_ids, k=self.prf_depth, return_vector=True)
+                prf_embs_q = self.prfRule.get_batch_prf_q_emb(search_q_ids, q_embs, prf_candidates)
+                search_hits = self.searcher.batch_search(prf_embs_q, search_q_ids, k=k, threads=threads)
+            else:
+                search_hits = self.searcher.batch_search(q_embs, search_q_ids, k=k, threads=threads)
+
+            for id, hits in search_hits.items():
                 hits = [SearchResult(hit.docid, hit.score, None) for hit in hits]
-                results[id] = hits
+                batch_hits[id] = hits
                 self.cache.set(id, hits)
 
-        if self.normalize:
-            results = self.normalize(results)
+        return batch_hits
 
-        return results
 
-    def switch_to_gpu(self, id: int):
-        res = faiss.StandardGpuResources()
-        self.index = faiss.index_cpu_to_gpu(res, id, self.index)
+class HybridBatchSearcher:
+    def __init__(
+            self,
+            prebuilt_index_names: List[str],
+            encoder_names: List[str],
+            device: str,
+            prf_depth: int = 0,
+            prf_method: str = 'avg',
+            rocchio_alpha: float = 0.9,
+            rocchio_beta: float = 0.1,
+            rocchio_gamma: float = 0.1,
+            rocchio_topk: int = 3,
+            rocchio_bottomk: int = 0,
+            cache_base_dir: str = None
+    ):
+        self.searchers: List[FaissBatchSearcher] = [FaissBatchSearcher(
+            prebuilt_index_name=index_name,
+            encoder_name=encoder_name,
+            device=device,
+            prf_depth=prf_depth,
+            prf_method=prf_method,
+            rocchio_alpha=rocchio_alpha,
+            rocchio_beta=rocchio_beta,
+            rocchio_gamma=rocchio_gamma,
+            rocchio_topk=rocchio_topk,
+            rocchio_bottomk=rocchio_bottomk,
+            cache_dir=os.path.join(cache_base_dir, os.path.split(index_name)[-1])
+        ) for index_name, encoder_name in zip(prebuilt_index_names, encoder_names)]
+        self.encoder_names = encoder_names
 
-    def switch_to_IVF(self):
-        self.index = faiss.IndexIVFFlat(self.index, self.dimension, 256)
+    def batch_search(
+            self,
+            queries: Union[List[str], np.ndarray],
+            q_ids: List[str],
+            k: int = 10,
+            threads: int = 1,
+    ) -> Dict[str, Dict[str, List[SearchResult]]]:
+        """
+
+        Parameters
+        ----------
+        queries : Union[List[str], np.ndarray]
+            List of query texts or list of query embeddings
+        q_ids : List[str]
+            List of corresponding query ids.
+        k : int
+            Number of hits to return.
+        threads : int
+            Maximum number of threads to use.
+
+        Returns
+        -------
+        Dict[str, list[tuple]]
+            return a dict contains key to list of SearchResult
+        """
+        final_hits = {q_id: {name: None for name in self.encoder_names} for q_id in q_ids}
+        for name, searcher in zip(self.encoder_names, self.searchers):
+            batch_hits = searcher.batch_search(queries, q_ids, k=k, threads=threads)
+            for q_id, hits in batch_hits.items():
+                final_hits[q_id][name] = hits
+
+        return final_hits
