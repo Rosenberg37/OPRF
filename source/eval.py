@@ -19,6 +19,7 @@ ARG_DICT = {
     'msmarco-passage-dev-subset': ['-c', '-M', '10', '-m', 'recip_rank', '-m', 'recall.1000', 'msmarco-passage-dev-subset'],
     'dl19-passage': ['-c', '-l', '2', '-m', 'map', '-m', 'ndcg_cut.10', '-l', '2', '-m', 'recall.1000', 'dl19-passage'],
     'dl20': ['-c', '-l', '2', '-m', 'map', '-m', 'ndcg_cut.10', '-l', '2', '-m', 'recall.1000', 'dl20-passage'],
+    'dl19-doc': ['-c', '-M', '100', '-m', 'map', '-m', 'ndcg_cut.10', '-m', 'recall.1000', 'dl19-doc'],
 }
 
 

@@ -7,26 +7,27 @@
 @Documentation: 
     ...
 """
-import json
 import os
 import os.path
 from multiprocessing import cpu_count
 from typing import List, Union
 
 from jsonargparse import CLI
-from pyserini.output_writer import TrecWriter
 from pyserini.query_iterator import get_query_iterator, TopicsFormat
 from tqdm import tqdm
 
 from source import DEFAULT_CACHE_DIR
 from source.eval import evaluate
+from source.utils.output import OutputWriter
 from source.utils.pseudo import PseudoQuerySearcher
 
 TOPIC_NAME_MAPPING = {
     "dev": 'msmarco-passage-dev-subset',
     'msmarco-passage-dev-subset': 'msmarco-passage-dev-subset',
-    "dl19": "dl19-passage",
     "dl19-passage": "dl19-passage",
+    "dl19-doc": "dl19-doc",
+    "dl20-passage": "dl20",
+    "dl20-doc": "dl20",
     "dl20": "dl20",
 }
 
@@ -49,7 +50,6 @@ def main(
         pseudo_rocchio_gamma: float = 0.1,
         pseudo_rocchio_topk: int = 3,
         pseudo_rocchio_bottomk: int = 0,
-        sparse_alpha: float = 0,
         doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
         num_return_hits: int = 1000,
         threads: int = cpu_count(),
@@ -78,7 +78,6 @@ def main(
     :param pseudo_rocchio_gamma: The gamma parameter to control the contribution from the average vector of the negative PRF passages
     :param pseudo_rocchio_topk: Set topk passages as positive PRF passages for rocchio
     :param pseudo_rocchio_bottomk: Set bottomk passages as negative PRF passages for rocchio, 0: do not use negatives prf passages.
-    :param sparse_alpha: alpha of sparse interpolation
     :param doc_index: the index of the candidate documents
     :param num_return_hits: how many hits will be returned
     :param threads: maximum threads to use during search
@@ -97,11 +96,6 @@ def main(
     elif pseudo_index_dir is None:
         raise ValueError("At least specify pseudo_name or pseudo_index")
 
-    topic_name = TOPIC_NAME_MAPPING[topic_name]
-    query_iterator = get_query_iterator(topic_name, TopicsFormat.DEFAULT)
-    topics = query_iterator.topics
-    topics_length = len(query_iterator.topics)
-
     searcher = PseudoQuerySearcher(
         pseudo_index_dir, doc_index,
         query_rm3=query_rm3,
@@ -116,67 +110,54 @@ def main(
         pseudo_rocchio_gamma=pseudo_rocchio_gamma,
         pseudo_rocchio_topk=pseudo_rocchio_topk,
         pseudo_rocchio_bottomk=pseudo_rocchio_bottomk,
-        sparse_alpha=sparse_alpha,
         device=device
     )
 
-    output_path = os.path.join(DEFAULT_CACHE_DIR, output_path)
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
+    topic_name = TOPIC_NAME_MAPPING[topic_name]
+    query_iterator = get_query_iterator(topic_name, TopicsFormat.DEFAULT)
 
     if type(pseudo_encoder_name) is str:
         pseudo_encoder_full_name = pseudo_encoder_name.split('/')[-1]
-        if pseudo_prf_depth is not None:
-            pseudo_encoder_full_name += "-" + pseudo_prf_method
-    else:
+    elif type(pseudo_encoder_name) is list:
         pseudo_encoder_full_name = "hybrid"
+    else:
+        raise ValueError("Unexpected type of pseudo_encoder_name.")
+    if pseudo_prf_depth is not None:
+        pseudo_encoder_full_name += f"-{pseudo_prf_method}-{pseudo_prf_depth}"
 
     run_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.{pseudo_encoder_full_name}.txt"
     run_path = os.path.join(output_path, run_name)
-    output_writer = TrecWriter(run_path, 'w', max_hits=num_return_hits, tag=output_path[:-4], topics=topics)
-
     if log_pseudo_hits:
-        log_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.log"
-        log_path = os.path.join(output_path, "log")
-        if not os.path.exists(log_path):
-            os.makedirs(log_path)
-        log_file = open(os.path.join(log_path, log_name), mode='w')
+        log_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.{pseudo_encoder_full_name}.log"
+        log_path = os.path.join(output_path, "log", log_name)
     else:
-        log_file = None
+        log_path = None
+
+    output_writer = OutputWriter(
+        run_path,
+        log_path=log_path,
+        max_hits=num_return_hits,
+        tag=output_path[:-4],
+        topics=query_iterator.topics
+    )
 
     with output_writer:
-        batch_queries, batch_queries_ids = list(), list()
+        batch_queries_ids = dict()
         for index, (query_id, text) in enumerate(tqdm(query_iterator)):
-            batch_queries_ids.append(str(query_id))
-            batch_queries.append(text)
+            batch_queries_ids[str(query_id)] = text
 
-            if (index + 1) % batch_size == 0 or index == topics_length - 1:
+            if (index + 1) % batch_size == 0 or index == len(query_iterator.topics) - 1:
+                batch_qids, batch_queries = zip(*batch_queries_ids.items())
                 batch_hits, batch_query_hits = searcher.batch_search(
-                    batch_queries, batch_queries_ids,
+                    batch_queries, batch_qids,
                     num_pseudo_queries=num_pseudo_queries,
                     num_pseudo_return_hits=num_pseudo_return_hits,
                     num_return_hits=num_return_hits,
                     threads=threads,
                     return_pseudo_hits=True,
                 )
-
-                for topic_id, hits in batch_hits.items():
-                    output_writer.write(topic_id, hits)
-
-                if log_file is not None:
-                    for topic_id, hits in batch_query_hits.items():
-                        query = batch_queries[batch_queries_ids.index(topic_id)]
-                        dump_dict = {
-                            query: [{
-                                "id": hit.docid,
-                                "score": hit.score,
-                                "contents": hit.contents
-                            } for hit in hits]
-                        }
-                        log_file.write(json.dumps(dump_dict, indent=4) + '\n')
-
+                output_writer.write(batch_hits, batch_query_hits, batch_queries_ids)
                 batch_queries_ids.clear()
-                batch_queries.clear()
 
     if do_eval:
         evaluate(topic_name=topic_name, path_to_candidate=run_path)

@@ -38,7 +38,7 @@ def convert_dataset_to_jsonl(
     if type(dataset_name) is str:
         dataset_name = [dataset_name]
 
-    with open(os.path.join(output_path, f"{output_name}.json"), "w") as f:
+    with open(os.path.join(output_path, f"{output_name}_{queries_num}.json"), "w") as f:
         for name in dataset_name:
             dataset = load_dataset(name)['train']
             for docid_queries in tqdm(dataset):

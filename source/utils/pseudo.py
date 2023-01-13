@@ -11,7 +11,6 @@ import os
 from typing import Dict, List, Tuple, Union
 
 import torch
-from pyserini.index import IndexReader
 
 from source import DEFAULT_CACHE_DIR
 from source.utils import SearchResult
@@ -41,10 +40,11 @@ class PseudoQuerySearcher:
             pseudo_rocchio_gamma: float = 0.1,
             pseudo_rocchio_topk: int = 3,
             pseudo_rocchio_bottomk: int = 0,
-            sparse_alpha: float = 0,
             cache_dir: str = None,
             device: str = "cpu",
     ):
+        self.device = device
+
         # Set up searcher from query to pseudo query
         self.searcher_query = LuceneBatchSearcher(
             pseudo_index_dir,
@@ -90,15 +90,6 @@ class PseudoQuerySearcher:
             )
         else:
             raise ValueError("Unexpected pseudo_encoder_name and doc_index")
-
-        # Set up interpolation
-        self.sparse_alpha = sparse_alpha
-        if sparse_alpha > 0:
-            sparse_index = DENSE_TO_SPARSE[doc_index]
-            self.sparse_index_reader = IndexReader.from_prebuilt_index(sparse_index)
-
-        # Set up aggregation
-        self.device = device
 
     def batch_search(
             self,
@@ -238,13 +229,6 @@ class PseudoQuerySearcher:
             doc_scores_matrix = (doc_scores_matrix - (max_score + min_score) / 2) / (max_score - min_score)
             coefficient = torch.softmax(pseudo_score, dim=-1).unsqueeze(0)
             doc_scores_matrix = torch.sum(doc_scores_matrix * coefficient, 1)
-
-            if self.sparse_alpha > 0:
-                query = batch_queries[i]
-                sparse_scores = [self.sparse_index_reader.compute_query_document_score(doc_id, query) for doc_id in doc_ids]
-                sparse_scores = torch.as_tensor(sparse_scores, device=self.device)
-
-                doc_scores_matrix = self.sparse_alpha * sparse_scores + (1 - self.sparse_alpha) * doc_scores_matrix
 
             final_hits = [SearchResult(doc_id, doc_score.item(), None) for doc_id, doc_score in zip(doc_ids, doc_scores_matrix)]
             if len(final_hits) < num_return_hits:
