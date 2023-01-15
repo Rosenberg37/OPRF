@@ -18,6 +18,7 @@ from pyserini.search import AnceQueryEncoder, AutoQueryEncoder, BprQueryEncoder,
     TctColBertQueryEncoder
 
 from source.utils import SearchResult
+from source.utils.lucene import LuceneBatchSearcher
 
 
 class AnceQueryBatchEncoder(AnceQueryEncoder):
@@ -135,8 +136,12 @@ class FaissBatchSearcher:
         #     self.searcher_doc.switch_to_gpu(int(id))
 
     def init_searcher(self):
-        self.query_encoder = init_query_encoder(self.encoder_name, self.device)
-        self.searcher = FaissSearcher.from_prebuilt_index(self.prebuilt_index_name, self.query_encoder)
+        if self.encoder_name == "lucene":
+            self.query_encoder = None
+            self.searcher = LuceneBatchSearcher.from_prebuilt_index(self.prebuilt_index_name, )
+        else:
+            self.query_encoder = init_query_encoder(self.encoder_name, self.device)
+            self.searcher = FaissSearcher.from_prebuilt_index(self.prebuilt_index_name, self.query_encoder)
 
     def batch_search(
             self,

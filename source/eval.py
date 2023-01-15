@@ -12,10 +12,10 @@ import os
 import re
 import subprocess
 from collections import OrderedDict
+from typing import Mapping
 
 from jsonargparse import CLI
 from scipy import stats
-from tabulate import tabulate
 
 from source import DEFAULT_CACHE_DIR
 
@@ -205,8 +205,7 @@ def evaluate(
         candidate_name: str = None,
         path_to_candidate: str = None,
         topic_name: str = None,
-        print_result: bool = True,
-):
+) -> Mapping[str, float]:
     if candidate_name is not None:
         if path_to_candidate is not None:
             raise ValueError("Can not specify both candidate_name and path_to_candidate")
@@ -219,15 +218,7 @@ def evaluate(
     if not os.path.exists(topic_name):
         topic_name = get_qrels_file(topic_name)
 
-    result = evaluate_trec(topic_name, path_to_candidate, ['map', 'ndcg_cut_10', 'recall_1000'])
-
-    if print_result:
-        print(tabulate({
-            key: [value]
-            for key, value in result.items()
-        }, headers='keys', tablefmt='fancy_grid'))
-
-    return result
+    return evaluate_trec(topic_name, path_to_candidate, ['map', 'ndcg_cut_10', 'recall_1000'])
 
     # argv = sys.argv
     # res1, res2 = argv[1], argv[2]

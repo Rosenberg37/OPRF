@@ -10,13 +10,14 @@
 import os
 import os.path
 from multiprocessing import cpu_count
-from typing import List, Union
+from typing import List, Mapping, Tuple, Union
 
 from jsonargparse import CLI
 from pyserini.query_iterator import get_query_iterator, TopicsFormat
+from tabulate import tabulate
 from tqdm import tqdm
 
-from source import DEFAULT_CACHE_DIR
+from source import BatchSearchResult, DEFAULT_CACHE_DIR
 from source.eval import evaluate
 from source.utils.output import OutputWriter
 from source.utils.pseudo import PseudoQuerySearcher
@@ -32,14 +33,14 @@ TOPIC_NAME_MAPPING = {
 }
 
 
-def main(
+def search(
         topic_name: str = 'msmarco-passage-dev-subset',
         query_rm3: bool = False,
         query_rocchio: bool = False,
         query_rocchio_use_negative: bool = False,
         pseudo_name: str = 'msmarco_v1_passage_doc2query-t5_expansions_5',
         pseudo_index_dir: str = None,
-        num_pseudo_queries: int = 2,
+        num_pseudo_queries: int = 8,
         add_query_to_pseudo: bool = False,
         num_pseudo_return_hits: int = 1000,
         pseudo_encoder_name: Union[str, List[str]] = "lucene",
@@ -56,9 +57,8 @@ def main(
         batch_size: int = cpu_count(),
         device: str = "cpu",
         output_path: str = os.path.join(DEFAULT_CACHE_DIR, "runs"),
-        do_eval: bool = True,
-        log_pseudo_hits: bool = False,
-):
+        print_result: bool = True,
+) -> Tuple[BatchSearchResult, BatchSearchResult, Mapping[str, float]]:
     """
 
     :param topic_name: Name of topics.
@@ -84,8 +84,7 @@ def main(
     :param batch_size: batch size used for the batch search.
     :param device: the device the whole search procedure will on
     :param output_path: the path where the run file will be outputted
-    :param do_eval: do evaluation step after search or not
-    :param log_pseudo_hits: write pseudo query hit results or not.
+    :param print_result: whether print the evaluation result.
     """
 
     if pseudo_name is not None:
@@ -127,11 +126,9 @@ def main(
 
     run_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.{pseudo_encoder_full_name}.txt"
     run_path = os.path.join(output_path, run_name)
-    if log_pseudo_hits:
-        log_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.{pseudo_encoder_full_name}.log"
-        log_path = os.path.join(output_path, "log", log_name)
-    else:
-        log_path = None
+
+    log_name = f"run.{pseudo_name}.{topic_name}.{num_pseudo_queries}.{pseudo_encoder_full_name}.log"
+    log_path = os.path.join(output_path, "log", log_name)
 
     output_writer = OutputWriter(
         run_path,
@@ -141,27 +138,38 @@ def main(
         topics=query_iterator.topics
     )
 
+    batch_queries_ids = dict()
+    all_hits, all_query_hits = dict(), dict()
+    for index, (query_id, text) in enumerate(tqdm(query_iterator)):
+        batch_queries_ids[str(query_id)] = text
+
+        if (index + 1) % batch_size == 0 or index == len(query_iterator.topics) - 1:
+            batch_qids, batch_queries = zip(*batch_queries_ids.items())
+            batch_hits, batch_query_hits = searcher.batch_search(
+                batch_queries, batch_qids,
+                num_pseudo_queries=num_pseudo_queries,
+                num_pseudo_return_hits=num_pseudo_return_hits,
+                num_return_hits=num_return_hits,
+                threads=threads,
+                return_pseudo_hits=True,
+            )
+
+            all_hits.update(batch_hits)
+            all_query_hits.update(batch_query_hits)
+            batch_queries_ids.clear()
+
     with output_writer:
-        batch_queries_ids = dict()
-        for index, (query_id, text) in enumerate(tqdm(query_iterator)):
-            batch_queries_ids[str(query_id)] = text
+        output_writer.write(all_hits, all_query_hits, batch_queries_ids)
 
-            if (index + 1) % batch_size == 0 or index == len(query_iterator.topics) - 1:
-                batch_qids, batch_queries = zip(*batch_queries_ids.items())
-                batch_hits, batch_query_hits = searcher.batch_search(
-                    batch_queries, batch_qids,
-                    num_pseudo_queries=num_pseudo_queries,
-                    num_pseudo_return_hits=num_pseudo_return_hits,
-                    num_return_hits=num_return_hits,
-                    threads=threads,
-                    return_pseudo_hits=True,
-                )
-                output_writer.write(batch_hits, batch_query_hits, batch_queries_ids)
-                batch_queries_ids.clear()
+    metrics = evaluate(topic_name=topic_name, path_to_candidate=run_path)
+    if print_result:
+        print(tabulate({
+            key: [value]
+            for key, value in metrics.items()
+        }, headers='keys', tablefmt='fancy_grid'))
 
-    if do_eval:
-        evaluate(topic_name=topic_name, path_to_candidate=run_path)
+    return all_hits, all_query_hits, metrics
 
 
 if __name__ == '__main__':
-    CLI(main)
+    CLI(search)

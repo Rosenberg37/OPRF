@@ -8,13 +8,13 @@
     ...
 """
 import os
-from typing import Dict, List, Tuple, Union
+from typing import List, Tuple, Union
 
 import torch
 
-from source import DEFAULT_CACHE_DIR
+from source import BatchSearchResult, DEFAULT_CACHE_DIR
 from source.utils import SearchResult
-from source.utils.faiss import FaissBatchSearcher, HybridBatchSearcher
+from source.utils.faiss import HybridBatchSearcher
 from source.utils.lucene import LuceneBatchSearcher
 
 DENSE_TO_SPARSE = {
@@ -58,38 +58,23 @@ class PseudoQuerySearcher:
         if cache_dir is None:
             cache_dir = os.path.join(DEFAULT_CACHE_DIR, "search_cache", "doc")
 
-        if pseudo_encoder_name == "lucene" and type(doc_index) is str:
-            self.searcher_pseudo: LuceneBatchSearcher = LuceneBatchSearcher.from_prebuilt_index(doc_index)
-        elif type(pseudo_encoder_name) is str and type(doc_index) is str:
-            self.searcher_pseudo: FaissBatchSearcher = FaissBatchSearcher(
-                prebuilt_index_name=doc_index,
-                encoder_name=pseudo_encoder_name,
-                device=device,
-                prf_depth=pseudo_prf_depth,
-                prf_method=pseudo_prf_method,
-                rocchio_alpha=pseudo_rocchio_alpha,
-                rocchio_beta=pseudo_rocchio_beta,
-                rocchio_gamma=pseudo_rocchio_gamma,
-                rocchio_topk=pseudo_rocchio_topk,
-                rocchio_bottomk=pseudo_rocchio_bottomk,
-                cache_dir=os.path.join(cache_dir, os.path.split(doc_index)[-1])
-            )
-        elif type(pseudo_encoder_name) is list and type(doc_index) is list:
-            self.searcher_pseudo: HybridBatchSearcher = HybridBatchSearcher(
-                prebuilt_index_names=doc_index,
-                encoder_names=pseudo_encoder_name,
-                device=device,
-                prf_depth=pseudo_prf_depth,
-                prf_method=pseudo_prf_method,
-                rocchio_alpha=pseudo_rocchio_alpha,
-                rocchio_beta=pseudo_rocchio_beta,
-                rocchio_gamma=pseudo_rocchio_gamma,
-                rocchio_topk=pseudo_rocchio_topk,
-                rocchio_bottomk=pseudo_rocchio_bottomk,
-                cache_base_dir=cache_dir,
-            )
-        else:
-            raise ValueError("Unexpected pseudo_encoder_name and doc_index")
+        if type(pseudo_encoder_name) is str and type(doc_index) is str:
+            doc_index = [doc_index]
+            pseudo_encoder_name = [pseudo_encoder_name]
+
+        self.searcher_pseudo: HybridBatchSearcher = HybridBatchSearcher(
+            prebuilt_index_names=doc_index,
+            encoder_names=pseudo_encoder_name,
+            device=device,
+            prf_depth=pseudo_prf_depth,
+            prf_method=pseudo_prf_method,
+            rocchio_alpha=pseudo_rocchio_alpha,
+            rocchio_beta=pseudo_rocchio_beta,
+            rocchio_gamma=pseudo_rocchio_gamma,
+            rocchio_topk=pseudo_rocchio_topk,
+            rocchio_bottomk=pseudo_rocchio_bottomk,
+            cache_base_dir=cache_dir,
+        )
 
     def batch_search(
             self,
@@ -100,7 +85,7 @@ class PseudoQuerySearcher:
             num_return_hits: int = 1000,
             return_pseudo_hits: bool = False,
             threads: int = 1,
-    ) -> Union[Dict, Tuple[Dict, Dict]]:
+    ) -> Union[BatchSearchResult, Tuple[BatchSearchResult, BatchSearchResult]]:
         """Search the collection concurrently for multiple queries, using multiple threads.
 
         Parameters
@@ -126,7 +111,7 @@ class PseudoQuerySearcher:
         """
 
         # Get pseudo queries
-        batch_query_hits = self.searcher_query.batch_search(
+        batch_query_hits: BatchSearchResult = self.searcher_query.batch_search(
             batch_queries, batch_qids,
             k=num_pseudo_queries,
             threads=threads,
@@ -148,72 +133,50 @@ class PseudoQuerySearcher:
         )  # hits of pseudo query, result in documents
 
         # Aggregate and generate final results
-        batch_final_hits = dict()
+        batch_final_hits: BatchSearchResult = dict()
         for i, (query_id, query_hits) in enumerate(batch_query_hits.items()):
             pseudo2score = dict()  # from pseudo query to query hit score
             doc2scores = dict()  # from document to hit scores
 
-            if type(self.searcher_pseudo) in [FaissBatchSearcher, LuceneBatchSearcher]:
-                for query_hit in query_hits:
-                    pseudo_id, pseudo_score = query_hit.docid, query_hit.score
-                    pseudo2score[pseudo_id] = pseudo_score
+            for query_hit in query_hits:
+                pseudo_id, pseudo_score = query_hit.docid, query_hit.score
+                pseudo2score[pseudo_id] = pseudo_score
 
-                    for pseudo_hit in total_pseudo_hits[pseudo_id]:
+                for name, pseudo_hits in total_pseudo_hits[pseudo_id].items():
+                    for pseudo_hit in pseudo_hits:
                         doc_id, doc_score = pseudo_hit.docid, pseudo_hit.score
                         if doc_id not in doc2scores:
-                            doc2scores[doc_id] = {pseudo_id: doc_score}
+                            doc2scores[doc_id] = {name: {pseudo_id: doc_score}}
+                        elif name not in doc2scores[doc_id]:
+                            doc2scores[doc_id][name] = {pseudo_id: doc_score}
                         else:
-                            doc2scores[doc_id][pseudo_id] = doc_score
+                            doc2scores[doc_id][name][pseudo_id] = doc_score
 
-                total_pseudo_mins = {id: min(hit.score for hit in hits) for id, hits in total_pseudo_hits.items()}
-                for doc_id, scores in doc2scores.items():  # generate padding score list
-                    doc2scores[doc_id] = [scores.get(pseudo_id, total_pseudo_mins[pseudo_id]) for pseudo_id in pseudo2score.keys()]
+            total_pseudo_mins = {
+                q_id: {
+                    name: min(hit.score for hit in hits)
+                    for name, hits in query_hits.items()
+                } for q_id, query_hits in total_pseudo_hits.items()
+            }
 
-                doc_ids, doc_scores_matrix = zip(*doc2scores.items())
+            doc_ids, doc_scores_matrix = list(), list()
+            for doc_id, doc2scores_ in doc2scores.items():  # generate padding score list
+                doc_ids.append(doc_id)
+                scores_matrix = list()
 
-            elif type(self.searcher_pseudo) is HybridBatchSearcher:
-                for query_hit in query_hits:
-                    pseudo_id, pseudo_score = query_hit.docid, query_hit.score
-                    pseudo2score[pseudo_id] = pseudo_score
+                for name in tuple(total_pseudo_hits.values())[0].keys():
+                    if name not in doc2scores_:
+                        scores_matrix.append([
+                            total_pseudo_mins[pseudo_id][name]
+                            for pseudo_id in pseudo2score.keys()
+                        ])
+                    else:
+                        scores_matrix.append([
+                            doc2scores_[name].get(pseudo_id, total_pseudo_mins[pseudo_id][name])
+                            for pseudo_id in pseudo2score.keys()
+                        ])
 
-                    for name, pseudo_hits in total_pseudo_hits[pseudo_id].items():
-                        for pseudo_hit in pseudo_hits:
-                            doc_id, doc_score = pseudo_hit.docid, pseudo_hit.score
-                            if doc_id not in doc2scores:
-                                doc2scores[doc_id] = {name: {pseudo_id: doc_score}}
-                            elif name not in doc2scores[doc_id]:
-                                doc2scores[doc_id][name] = {pseudo_id: doc_score}
-                            else:
-                                doc2scores[doc_id][name][pseudo_id] = doc_score
-
-                total_pseudo_mins = {
-                    q_id: {
-                        name: min(hit.score for hit in hits)
-                        for name, hits in query_hits.items()
-                    } for q_id, query_hits in total_pseudo_hits.items()
-                }
-
-                doc_ids, doc_scores_matrix = list(), list()
-                for doc_id, doc2scores_ in doc2scores.items():  # generate padding score list
-                    doc_ids.append(doc_id)
-                    scores_matrix = list()
-
-                    for name in tuple(total_pseudo_hits.values())[0].keys():
-                        if name not in doc2scores_:
-                            scores_matrix.append([
-                                total_pseudo_mins[pseudo_id][name]
-                                for pseudo_id in pseudo2score.keys()
-                            ])
-                        else:
-                            scores_matrix.append([
-                                doc2scores_[name].get(pseudo_id, total_pseudo_mins[pseudo_id][name])
-                                for pseudo_id in pseudo2score.keys()
-                            ])
-
-                    doc_scores_matrix.append(scores_matrix)
-
-            else:
-                raise RuntimeError("Unexpected searcher_pseudo type")
+                doc_scores_matrix.append(scores_matrix)
 
             pseudo_score = torch.as_tensor(list(pseudo2score.values()), device=self.device)
             doc_scores_matrix = torch.as_tensor(doc_scores_matrix, device=self.device)

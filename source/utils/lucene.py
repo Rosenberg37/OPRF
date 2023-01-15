@@ -8,13 +8,14 @@
     ...
 """
 import json
-from typing import Dict, List
+from typing import List
 
 from pyserini.index import IndexReader
 from pyserini.search import LuceneSearcher
 from pyserini.search.lucene.__main__ import set_bm25_parameters
 from pyserini.util import download_prebuilt_index
 
+from source import BatchSearchResult
 from source.utils import SearchResult
 
 
@@ -45,7 +46,7 @@ class LuceneBatchSearcher:
             k: int = 10,
             threads: int = 1,
             add_query_to_pseudo: bool = False,
-    ) -> Dict[str, List[SearchResult]]:
+    ) -> BatchSearchResult:
         if k <= 0:
             print("Warning, num_pseudo_queries less or equal zero, set pseudo query directly to be query.\n")
 

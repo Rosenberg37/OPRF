@@ -8,5 +8,9 @@
     ...
 """
 import os
+from typing import Dict, List
+
+from source.utils import SearchResult
 
 DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'pprf')
+BatchSearchResult = Dict[str, List[SearchResult]]
