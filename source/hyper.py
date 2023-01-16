@@ -115,7 +115,7 @@ def main(
         for metric, value in metrics.items():
             data.loc[i] = [parameter, metric, value]
             i += 1
-    sns.relplot(data, x=parameter_name, y="value", hue="metric", kind="line")
+    sns.relplot(data, x=parameter_name, y="value", hue="metric", markers=True, kind="line")
     plt.show()
     plt.savefig(os.path.join(output_path, f"{statistics_name}.png"))
 

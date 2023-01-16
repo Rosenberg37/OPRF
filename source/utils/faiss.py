@@ -138,7 +138,7 @@ class FaissBatchSearcher:
     def init_searcher(self):
         if self.encoder_name == "lucene":
             self.query_encoder = None
-            self.searcher = LuceneBatchSearcher.from_prebuilt_index(self.prebuilt_index_name, )
+            self.searcher = LuceneBatchSearcher.from_prebuilt_index(self.prebuilt_index_name)
         else:
             self.query_encoder = init_query_encoder(self.encoder_name, self.device)
             self.searcher = FaissSearcher.from_prebuilt_index(self.prebuilt_index_name, self.query_encoder)

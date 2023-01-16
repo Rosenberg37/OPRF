@@ -12,7 +12,6 @@ from typing import List
 
 from pyserini.index import IndexReader
 from pyserini.search import LuceneSearcher
-from pyserini.search.lucene.__main__ import set_bm25_parameters
 from pyserini.util import download_prebuilt_index
 
 from source import BatchSearchResult
@@ -28,7 +27,7 @@ class LuceneBatchSearcher:
             rocchio_use_negative: bool = False,
     ):
         self.searcher = LuceneSearcher(index_dir)
-        set_bm25_parameters(self.searcher, None, 2.56, 0.59)
+        self.searcher.set_bm25(2.56, 0.59)
 
         if rm3:
             self.searcher.set_rm3()

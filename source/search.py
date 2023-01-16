@@ -38,7 +38,7 @@ def search(
         query_rm3: bool = False,
         query_rocchio: bool = False,
         query_rocchio_use_negative: bool = False,
-        pseudo_name: str = 'msmarco_v1_passage_doc2query-t5_expansions_5',
+        pseudo_name: str = 'msmarco_v1_passage_doc2query-t5_expansions_-1',
         pseudo_index_dir: str = None,
         num_pseudo_queries: int = 8,
         add_query_to_pseudo: bool = False,
