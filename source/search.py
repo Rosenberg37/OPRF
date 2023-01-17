@@ -21,14 +21,26 @@ from source.eval import evaluate
 from source.utils.output import OutputWriter
 from source.utils.pseudo import PseudoQuerySearcher
 
-TOPIC_NAME_MAPPING = {
-    "dev": 'msmarco-passage-dev-subset',
-    'msmarco-passage-dev-subset': 'msmarco-passage-dev-subset',
+QUERY_NAME_MAPPING = {
+    "msmarco-passage-dev-subset": "msmarco-passage-dev-subset",
+    "dev-passage": "msmarco-passage-dev-subset",
     "dl19-passage": "dl19-passage",
-    "dl19-doc": "dl19-doc",
     "dl20-passage": "dl20",
+    "msmarco-doc-dev": "msmarco-doc-dev",
+    "dev-doc": "msmarco-doc-dev",
+    "dl19-doc": "dl19-doc",
     "dl20-doc": "dl20",
-    "dl20": "dl20",
+}
+
+EVAL_NAME_MAPPING = {
+    "msmarco-passage-dev-subset": "msmarco-passage-dev-subset",
+    "dev-passage": "msmarco-passage-dev-subset",
+    "dl19-passage": "dl19-passage",
+    "dl20-passage": "dl20-passage",
+    "msmarco-doc-dev": "msmarco-doc-dev",
+    "dev-doc": "msmarco-doc-dev",
+    "dl19-doc": "dl19-doc",
+    "dl20-doc": "dl20-doc",
 }
 
 
@@ -119,7 +131,9 @@ def search(
         device=device
     )
 
-    query_iterator = get_query_iterator(TOPIC_NAME_MAPPING[topic_name], TopicsFormat.DEFAULT)
+    if topic_name not in QUERY_NAME_MAPPING or topic_name not in EVAL_NAME_MAPPING:
+        raise ValueError(f"{topic_name} is current not supported.")
+    query_iterator = get_query_iterator(QUERY_NAME_MAPPING[topic_name], TopicsFormat.DEFAULT)
 
     if type(pseudo_encoder_name) is str:
         pseudo_encoder_full_name = pseudo_encoder_name.split('/')[-1]
@@ -170,7 +184,7 @@ def search(
         output_writer.write(query_hits, pseudo_hits, queries_ids)
 
     metrics = evaluate(
-        topic_name=topic_name,
+        topic_name=EVAL_NAME_MAPPING[topic_name],
         path_to_candidate=run_path,
         reference_name=reference_name,
         print_result=print_result
