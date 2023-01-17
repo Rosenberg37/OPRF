@@ -10,6 +10,7 @@
 import json
 import os
 from abc import abstractmethod
+from collections import OrderedDict
 from typing import List
 
 from pyserini.search import JLuceneSearcherResult
@@ -78,14 +79,17 @@ class OutputWriter:
                 break
 
     @abstractmethod
-    def write(self, batch_hits: dict, batch_query_hits: dict = None, batch_queries_ids: dict = None):
-        for topic_id, hits in batch_hits.items():
+    def write(self, query_hits: dict, pseudo_hits: dict = None, queries_ids: dict = None):
+        query_hits = OrderedDict(query_hits)
+        pseudo_hits = OrderedDict(pseudo_hits)
+
+        for topic_id, hits in query_hits.items():
             for docid, rank, score, _ in self.hits_iterator(hits):
                 self._file.write(f'{topic_id} Q0 {docid} {rank} {score:.6f} {self.tag}\n')
 
         if self._log_file is not None:
-            for topic_id, hits in batch_query_hits.items():
-                query = batch_queries_ids[topic_id] if batch_queries_ids else topic_id
+            for topic_id, hits in pseudo_hits.items():
+                query = queries_ids[topic_id] if queries_ids else topic_id
                 dump_dict = {
                     query: [{
                         "id": hit.docid,
@@ -93,4 +97,4 @@ class OutputWriter:
                         "contents": hit.contents
                     } for hit in hits]
                 }
-                self._log_file.write(json.dumps(dump_dict, indent=4) + '\n')
+                self._log_file.write(json.dumps(dump_dict, indent=4, sort_keys=True) + '\n')

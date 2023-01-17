@@ -14,7 +14,6 @@ from typing import List, Mapping, Tuple, Union
 
 from jsonargparse import CLI
 from pyserini.query_iterator import get_query_iterator, TopicsFormat
-from tabulate import tabulate
 from tqdm import tqdm
 
 from source import BatchSearchResult, DEFAULT_CACHE_DIR
@@ -53,11 +52,15 @@ def search(
         pseudo_rocchio_bottomk: int = 0,
         doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
         num_return_hits: int = 1000,
+        max_passage: bool = False,
+        max_passage_hits: int = 100,
+        max_passage_delimiter: str = '#',
+        output_path: str = os.path.join(DEFAULT_CACHE_DIR, "runs"),
+        reference_name: str = None,
+        print_result: bool = True,
         threads: int = cpu_count(),
         batch_size: int = cpu_count(),
         device: str = "cpu",
-        output_path: str = os.path.join(DEFAULT_CACHE_DIR, "runs"),
-        print_result: bool = True,
 ) -> Tuple[BatchSearchResult, BatchSearchResult, Mapping[str, float]]:
     """
 
@@ -80,11 +83,15 @@ def search(
     :param pseudo_rocchio_bottomk: Set bottomk passages as negative PRF passages for rocchio, 0: do not use negatives prf passages.
     :param doc_index: the index of the candidate documents
     :param num_return_hits: how many hits will be returned
+    :param max_passage: Select only max passage from document.
+    :param max_passage_hits: Final number of hits when selecting only max passage.
+    :param max_passage_delimiter: Delimiter between docid and passage id.
+    :param reference_name: Reference name left for the evaluation of p-value
+    :param print_result: whether print the evaluation result.
     :param threads: maximum threads to use during search
     :param batch_size: batch size used for the batch search.
     :param device: the device the whole search procedure will on
     :param output_path: the path where the run file will be outputted
-    :param print_result: whether print the evaluation result.
     """
 
     if pseudo_name is not None:
@@ -112,8 +119,7 @@ def search(
         device=device
     )
 
-    topic_name = TOPIC_NAME_MAPPING[topic_name]
-    query_iterator = get_query_iterator(topic_name, TopicsFormat.DEFAULT)
+    query_iterator = get_query_iterator(TOPIC_NAME_MAPPING[topic_name], TopicsFormat.DEFAULT)
 
     if type(pseudo_encoder_name) is str:
         pseudo_encoder_full_name = pseudo_encoder_name.split('/')[-1]
@@ -135,17 +141,19 @@ def search(
         log_path=log_path,
         max_hits=num_return_hits,
         tag=output_path[:-4],
-        topics=query_iterator.topics
+        topics=query_iterator.topics,
+        use_max_passage=max_passage,
+        max_passage_delimiter=max_passage_delimiter,
+        max_passage_hits=max_passage_hits
     )
 
-    batch_queries_ids = dict()
-    all_hits, all_query_hits = dict(), dict()
+    batch_queries, batch_qids = list(), list()
+    query_hits, pseudo_hits, queries_ids = dict(), dict(), dict()
     for index, (query_id, text) in enumerate(tqdm(query_iterator)):
-        batch_queries_ids[str(query_id)] = text
+        batch_queries.append(text), batch_qids.append(str(query_id))
 
         if (index + 1) % batch_size == 0 or index == len(query_iterator.topics) - 1:
-            batch_qids, batch_queries = zip(*batch_queries_ids.items())
-            batch_hits, batch_query_hits = searcher.batch_search(
+            batch_query_hits, batch_pseudo_hits = searcher.batch_search(
                 batch_queries, batch_qids,
                 num_pseudo_queries=num_pseudo_queries,
                 num_pseudo_return_hits=num_pseudo_return_hits,
@@ -154,21 +162,20 @@ def search(
                 return_pseudo_hits=True,
             )
 
-            all_hits.update(batch_hits)
-            all_query_hits.update(batch_query_hits)
-            batch_queries_ids.clear()
+            query_hits.update(batch_query_hits), pseudo_hits.update(batch_pseudo_hits)
+            queries_ids.update({qid: query for query, qid in zip(batch_queries, batch_qids)})
+            batch_queries.clear(), batch_qids.clear()
 
     with output_writer:
-        output_writer.write(all_hits, all_query_hits, batch_queries_ids)
+        output_writer.write(query_hits, pseudo_hits, queries_ids)
 
-    metrics = evaluate(topic_name=topic_name, path_to_candidate=run_path)
-    if print_result:
-        print(tabulate({
-            key: [value]
-            for key, value in metrics.items()
-        }, headers='keys', tablefmt='fancy_grid'))
-
-    return all_hits, all_query_hits, metrics
+    metrics = evaluate(
+        topic_name=topic_name,
+        path_to_candidate=run_path,
+        reference_name=reference_name,
+        print_result=print_result
+    )
+    return query_hits, pseudo_hits, metrics
 
 
 if __name__ == '__main__':
