@@ -316,4 +316,4 @@ dependencies:
       - websocket-client==1.4.2
       - widgetsnbextension==4.0.3
       - zipp==3.11.0
-prefix: /home2/wenxueru2022/miniconda3/envs/PPRF
+prefix: ~/miniconda3/envs/PPRF

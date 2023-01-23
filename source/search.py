@@ -65,7 +65,7 @@ def search(
         doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
         num_return_hits: int = 1000,
         max_passage: bool = False,
-        max_passage_hits: int = 100,
+        max_passage_hits: int = 1000,
         max_passage_delimiter: str = '#',
         output_path: str = os.path.join(DEFAULT_CACHE_DIR, "runs"),
         reference_name: str = None,
@@ -171,7 +171,6 @@ def search(
                 batch_queries, batch_qids,
                 num_pseudo_queries=num_pseudo_queries,
                 num_pseudo_return_hits=num_pseudo_return_hits,
-                num_return_hits=num_return_hits,
                 threads=threads,
                 return_pseudo_hits=True,
             )

@@ -73,44 +73,6 @@ EVAL_ARGS = {
 }
 
 
-def get_qrels_file(collection_name):
-    """
-    Parameters
-    ----------
-    collection_name : str
-        collection_name
-
-    Returns
-    -------
-    path : str
-        path of the qrels file
-    """
-    from pyserini.search._base import JRelevanceJudgments, qrels_mapping
-    if collection_name in qrels_mapping:
-        qrels = qrels_mapping[collection_name]
-
-        target_path = os.path.join(DEFAULT_CACHE_DIR, qrels.path)
-        if os.path.exists(target_path):
-            return target_path
-
-        target_dir = os.path.split(target_path)[0]
-        if not os.path.exists(target_dir):
-            os.makedirs(target_dir)
-
-        with open(target_path, 'w') as file:
-            qrels_content = JRelevanceJudgments.getQrelsResource(qrels)
-            file.write(qrels_content)
-        return target_path
-
-    raise FileNotFoundError(f'no qrels file for {collection_name}')
-
-
-def run(command):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE)
-    output, _ = process.communicate()
-    return str(output, encoding='utf-8')
-
-
 def evaluate_trec(qrels, res, metric_args_mapping):
     """ all_trecs, """
     results = OrderedDict()
