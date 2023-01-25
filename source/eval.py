@@ -35,7 +35,7 @@ EVAL_ARGS = {
         "recall.1000": ['-c', '-m', 'recall.1000'],
     },
     "dl19-passage": {
-        "recip_rank": ['-c', '-m', 'recip_rank'],
+        "recip_rank": ['-c', '-l', '2', '-m', 'recip_rank'],
         "ndcg_cut.10": ['-c', '-m', 'ndcg_cut.10'],
         "map": ['-c', '-l', '2', '-m', 'map'],
         "recall.100": ['-c', '-l', '2', '-m', 'recall.100'],
@@ -43,7 +43,7 @@ EVAL_ARGS = {
         "recall.1000": ['-c', '-l', '2', '-m', 'recall.1000'],
     },
     "dl20-passage": {
-        "recip_rank": ['-c', '-m', 'recip_rank'],
+        "recip_rank": ['-c', '-l', '2', '-m', 'recip_rank'],
         "ndcg_cut.10": ['-c', '-m', 'ndcg_cut.10'],
         "map": ['-c', '-l', '2', '-m', 'map'],
         "recall.100": ['-c', '-l', '2', '-m', 'recall.100'],
@@ -64,6 +64,7 @@ EVAL_ARGS = {
     },
     "dl20-doc": {
         "map_100": ['-c', '-M', '100', '-m', 'map'],
+        "map": ['-c', '-m', 'map'],
         "ndcg_cut.10": ['-c', '-m', 'ndcg_cut.10'],
         "recall.1000": ['-c', '-m', 'recall.1000'],
         "recall.500": ['-c', '-m', 'recall.500'],

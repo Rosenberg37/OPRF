@@ -41,7 +41,7 @@ class PseudoQuerySearcher:
             pseudo_rocchio_gamma: float = 0.1,
             pseudo_rocchio_topk: int = 3,
             pseudo_rocchio_bottomk: int = 0,
-            cache_dir: str = None,
+            cache_dir: str = os.path.join(DEFAULT_CACHE_DIR, "search_cache"),
             device: str = "cpu",
     ):
         self.device = device
@@ -56,9 +56,6 @@ class PseudoQuerySearcher:
         self.add_query_to_pseudo = add_query_to_pseudo
 
         # Set up searcher from pseudo query to document
-        if cache_dir is None:
-            cache_dir = os.path.join(DEFAULT_CACHE_DIR, "search_cache", "doc")
-
         if type(pseudo_encoder_name) is str and type(doc_index) is str:
             doc_index = [doc_index]
             pseudo_encoder_name = [pseudo_encoder_name]
@@ -131,6 +128,12 @@ class PseudoQuerySearcher:
             k=num_pseudo_return_hits,
             threads=threads
         )  # hits of pseudo query, result in documents
+        total_pseudo_mins = {
+            q_id: {
+                name: min(hit.score for hit in hits)
+                for name, hits in query_hits.items()
+            } for q_id, query_hits in total_pseudo_hits.items()
+        }
 
         # Aggregate and generate final results
         batch_final_hits: BatchSearchResult = dict()
@@ -151,13 +154,6 @@ class PseudoQuerySearcher:
                             doc2scores[doc_id][name] = {pseudo_id: doc_score}
                         else:
                             doc2scores[doc_id][name][pseudo_id] = doc_score
-
-            total_pseudo_mins = {
-                q_id: {
-                    name: min(hit.score for hit in hits)
-                    for name, hits in query_hits.items()
-                } for q_id, query_hits in total_pseudo_hits.items()
-            }
 
             doc_ids, doc_scores_matrix = list(), list()
             for doc_id, doc2scores_ in doc2scores.items():  # generate padding score list

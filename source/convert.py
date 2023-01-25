@@ -21,7 +21,7 @@ from source import DEFAULT_CACHE_DIR
 
 def convert_dataset_to_jsonl(
         dataset_name: Union[str, List[str]] = 'castorini/msmarco_v1_passage_doc2query-t5_expansions',
-        queries_num: int = 5,
+        queries_num: int = -1,
         output_name: str = None,
 ):
     if output_name is None:
@@ -38,7 +38,7 @@ def convert_dataset_to_jsonl(
     if type(dataset_name) is str:
         dataset_name = [dataset_name]
 
-    output_path = os.path.join(output_path, f"{output_name}_{queries_num}.json")
+    output_path = os.path.join(output_path, f"{output_name}.json")
     print(f"Output to {output_path}")
     with open(output_path, "w") as f:
         for name in dataset_name:

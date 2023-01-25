@@ -119,7 +119,7 @@ class LuceneBatchSearcher:
 
             if add_query_to_pseudo:
                 for contents, qid in zip(queries, qids):
-                    query_score = sum(hit.score for hit in batch_hits[qid])
+                    query_score = max(hit.score for hit in batch_hits[qid])
                     batch_hits[qid].append(SearchResult(qid, query_score, contents))
 
         return batch_hits

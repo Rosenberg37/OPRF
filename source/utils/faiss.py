@@ -16,7 +16,8 @@ import numpy as np
 import torch
 from diskcache import Cache
 from pyserini.search import AnceQueryEncoder, AutoQueryEncoder, DenseVectorAveragePrf, DenseVectorRocchioPrf, FaissSearcher, \
-    TctColBertQueryEncoder
+    QueryEncoder
+from transformers import BertModel, BertTokenizerFast
 
 from source.utils import SearchResult
 from source.utils.lucene import LuceneBatchSearcher
@@ -31,7 +32,19 @@ class AnceQueryBatchEncoder(AnceQueryEncoder):
         return self.prf_batch_encode(queries)
 
 
-class TctColBertQueryBatchEncoder(TctColBertQueryEncoder):
+class TctColBertQueryBatchEncoder(QueryEncoder):
+    def __init__(self, encoder_dir: str = None, tokenizer_name: str = None,
+                 encoded_query_dir: str = None, device: str = 'cpu', **kwargs):
+        super().__init__(encoded_query_dir)
+        if encoder_dir:
+            self.device = device
+            self.model = BertModel.from_pretrained(encoder_dir)
+            self.model.to(self.device)
+            self.tokenizer = BertTokenizerFast.from_pretrained(tokenizer_name or encoder_dir)
+            self.has_model = True
+        if (not self.has_model) and (not self.has_encoded_query):
+            raise Exception('Neither query encoder model nor encoded queries provided. Please provide at least one')
+
     def batch_encode(self, queries: List[str]):
         max_length = 36  # hardcode for now
         queries = ['[CLS] [Q] ' + query + '[MASK]' * max_length for query in queries]
@@ -125,15 +138,14 @@ class FaissBatchSearcher:
         self.searcher = None
 
         # Check PRF Flag
-        self.PRF_FLAG = False
+        self.prf_rule = None
         if prf_depth > 0 and self.encoder_name != "lucene" and self.encoder_name not in IMPACT_ENCODERS:
-            self.PRF_FLAG = True
             self.prf_depth = prf_depth
 
             if prf_method.lower() == 'avg':
-                self.prfRule = DenseVectorAveragePrf()
+                self.prf_rule = DenseVectorAveragePrf()
             elif prf_method.lower() == 'rocchio':
-                self.prfRule = DenseVectorRocchioPrf(
+                self.prf_rule = DenseVectorRocchioPrf(
                     rocchio_alpha,
                     rocchio_beta,
                     rocchio_gamma,
@@ -208,9 +220,9 @@ class FaissBatchSearcher:
             else:
                 q_embs = search_queries
 
-            if self.PRF_FLAG:
-                q_embs, prf_candidates = self.searcher.batch_search(q_embs, search_q_ids, k=self.prf_depth, return_vector=True)
-                prf_embs_q = self.prfRule.get_batch_prf_q_emb(search_q_ids, q_embs, prf_candidates)
+            if self.prf_rule is not None and self.query_encoder is not None:
+                q_embs, prf_candidates = self.searcher.batch_search(q_embs, search_q_ids, k=self.prf_depth, return_vector=True, threads=threads)
+                prf_embs_q = self.prf_rule.get_batch_prf_q_emb(search_q_ids, q_embs, prf_candidates)
                 search_hits = self.searcher.batch_search(prf_embs_q, search_q_ids, k=k, threads=threads)
             else:
                 search_hits = self.searcher.batch_search(q_embs, search_q_ids, k=k, threads=threads)
