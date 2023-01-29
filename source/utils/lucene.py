@@ -32,6 +32,14 @@ LUCENE_BASELINES = {
         'bm25': True,
         'output': 'run.msmarco-v1-passage.bm25-default.dl19.txt'
     },
+    'BM25+RM3': {
+        'threads': 16,
+        'batch_size': 128,
+        'index': 'msmarco-v1-passage-full',
+        'bm25': True,
+        'rm3': True,
+        'output': 'run.msmarco-v1-passage.bm25-rm3-default.dl19.txt'
+    },
     'docT5query': {
         'threads': 16,
         'batch_size': 128,
@@ -91,39 +99,32 @@ class LuceneBatchSearcher:
             if index == 'msmarco-passage' or index == 'msmarco-passage-slim' or index == 'msmarco-v1-passage' or \
                     index == 'msmarco-v1-passage-slim' or index == 'msmarco-v1-passage-full':
                 # See https://github.com/castorini/anserini/blob/master/docs/regressions-msmarco-passage.md
-                print('MS MARCO passage: setting k1=0.82, b=0.68')
                 searcher.set_bm25(0.82, 0.68)
             elif index == 'msmarco-passage-expanded' or \
                     index == 'msmarco-v1-passage-d2q-t5' or \
                     index == 'msmarco-v1-passage-d2q-t5-docvectors':
                 # See https://github.com/castorini/anserini/blob/master/docs/regressions-msmarco-passage-docTTTTTquery.md
-                print('MS MARCO passage w/ doc2query-T5 expansion: setting k1=2.18, b=0.86')
                 searcher.set_bm25(2.18, 0.86)
             elif index == 'msmarco-doc' or index == 'msmarco-doc-slim' or index == 'msmarco-v1-doc' or \
                     index == 'msmarco-v1-doc-slim' or index == 'msmarco-v1-doc-full':
                 # See https://github.com/castorini/anserini/blob/master/docs/regressions-msmarco-doc.md
-                print('MS MARCO doc: setting k1=4.46, b=0.82')
                 searcher.set_bm25(4.46, 0.82)
             elif index == 'msmarco-doc-per-passage' or index == 'msmarco-doc-per-passage-slim' or \
                     index == 'msmarco-v1-doc-segmented' or index == 'msmarco-v1-doc-segmented-slim' or \
                     index == 'msmarco-v1-doc-segmented-full':
                 # See https://github.com/castorini/anserini/blob/master/docs/regressions-msmarco-doc-segmented.md
-                print('MS MARCO doc, per passage: setting k1=2.16, b=0.61')
                 searcher.set_bm25(2.16, 0.61)
             elif index == 'msmarco-doc-expanded-per-doc' or \
                     index == 'msmarco-v1-doc-d2q-t5' or \
                     index == 'msmarco-v1-doc-d2q-t5-docvectors':
                 # See https://github.com/castorini/anserini/blob/master/docs/regressions-msmarco-doc-docTTTTTquery.md
-                print('MS MARCO doc w/ doc2query-T5 (per doc) expansion: setting k1=4.68, b=0.87')
                 searcher.set_bm25(4.68, 0.87)
             elif index == 'msmarco-doc-expanded-per-passage' or \
                     index == 'msmarco-v1-doc-segmented-d2q-t5' or \
                     index == 'msmarco-v1-doc-segmented-d2q-t5-docvectors':
                 # See https://github.com/castorini/anserini/blob/master/docs/regressions-msmarco-doc-segmented-docTTTTTquery.md
-                print('MS MARCO doc w/ doc2query-T5 (per passage) expansion: setting k1=2.56, b=0.59')
                 searcher.set_bm25(2.56, 0.59)
 
-        print(f'Setting BM25 parameters: k1={k1}, b={b}')
         searcher.set_bm25(k1, b)
 
     def batch_search(
@@ -214,6 +215,7 @@ def lucene_main(
         searcher: str = 'simple',
         remove_duplicates: bool = False,
         remove_query: bool = False,
+        print_result: bool = True,
 ):
     query_iterator = get_query_iterator(topic_name, TopicsFormat(topics_format))
     topics = query_iterator.topics
@@ -260,24 +262,19 @@ def lucene_main(
     fields = dict()
     if fields:
         fields = dict([pair.split('=') for pair in fields])
-        print(f'Searching over fields: {fields}')
 
     query_generator = None
     if dismax:
         query_generator = JDisjunctionMaxQueryGenerator(tiebreaker)
-        print(f'Using dismax query generator with tiebreaker={tiebreaker}')
 
     if tokenizer != None:
         analyzer = JWhiteSpaceAnalyzer()
         searcher.set_analyzer(analyzer)
-        print(f'Using whitespace analyzer because of pretokenized topics')
         tokenizer = AutoTokenizer.from_pretrained(tokenizer)
-        print(f'Using {tokenizer} to preprocess topics')
 
     if stopwords:
         analyzer = JDefaultEnglishAnalyzer.fromArguments('porter', False, stopwords)
         searcher.set_analyzer(analyzer)
-        print(f'Using custom stopwords={stopwords}')
 
     # get re-ranker
     use_prcl = prcl and len(prcl) > 0 and alpha > 0
@@ -307,7 +304,6 @@ def lucene_main(
             tokens = ['run', topics, '+'.join(search_rankers), 'txt']
             output_path = '.'.join(tokens)
 
-    print(f'Running {topics} topics, saving to {output_path}...')
     tag = output_path[:-4] if output is None else 'Anserini'
 
     output_writer = get_output_writer(output_path, OutputFormat(output_format), 'w',
@@ -372,6 +368,6 @@ def lucene_main(
     metrics = evaluate(
         topic_name=EVAL_NAME_MAPPING[topic_name],
         path_to_candidate=output_path,
-        print_result=False,
+        print_result=print_result,
     )
     return results, metrics

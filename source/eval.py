@@ -25,6 +25,7 @@ from tabulate import tabulate
 
 from source import DEFAULT_CACHE_DIR
 
+TREC_EVAL_SCRIPT_PATH = os.path.join(DEFAULT_CACHE_DIR, "eval", "trec_eval-9.0.7", "trec_eval")
 EVAL_NAME_MAPPING = {
     "msmarco-passage-dev-subset": "msmarco-passage-dev-subset",
     "dev-passage": "msmarco-passage-dev-subset",
@@ -35,20 +36,28 @@ EVAL_NAME_MAPPING = {
     "dl19-doc": "dl19-doc",
     "dl20-doc": "dl20-doc",
 }
-
-TREC_EVAL_SCRIPT_PATH = os.path.join(DEFAULT_CACHE_DIR, "eval", "trec_eval-9.0.7", "trec_eval")
+METRIC_NAME_MAPPING = {
+    "MRR": 'recip_rank',
+    "nDCG@10": 'ndcg_cut_10',
+    "MAP": 'map',
+    "R@100": 'recall_100',
+    "R@500": 'recall_500',
+    "R@1000": 'recall_1000',
+}
 
 
 def evaluate_trec(qrels, res, metrics):
     """ all_trecs, """
-    command = ['-c', '-l', '2', '-m', 'all_trec', qrels, res]
-    if 'doc' in qrels:
-        command = ['-c', '-m', 'all_trec', '-q', qrels, res]
+    if 'dl' in qrels and 'passage' in qrels:
+        command = ['-c', '-l', '2', '-m', 'all_trec', qrels, res]
+    else:
+        command = ['-c', '-m', 'all_trec', qrels, res]
     output = trec_eval(command)
 
     metrics_val = []
     for metric in metrics:
-        curr_res = re.findall(r'{0}\s+all.+\d+'.format(metric), output)[0].split('\t')[2].strip()
+        name = METRIC_NAME_MAPPING[metric]
+        curr_res = re.findall(r'{0}\s+all.+\d+'.format(name), output)[0].split('\t')[2].strip()
         metrics_val.append(float(curr_res))
 
     return OrderedDict(zip(metrics, metrics_val))
@@ -56,15 +65,17 @@ def evaluate_trec(qrels, res, metrics):
 
 def evaluate_trec_per_query(qrels, res, metrics):
     """ all_trecs, """
-
-    command = ['-c', '-l', '2', '-m', 'all_trec', '-q', qrels, res]
-    if 'doc' in qrels:
+    if 'dl' in qrels and 'passage' in qrels:
+        command = ['-c', '-l', '2', '-m', 'all_trec', '-q', qrels, res]
+    else:
         command = ['-c', '-m', 'all_trec', '-q', qrels, res]
+
     output = trec_eval(command)
 
     metrics_val = []
     for metric in metrics:
-        curr_res = re.findall(r'{0}\s+\t\d+.+\d+'.format(metric), output)
+        name = METRIC_NAME_MAPPING[metric]
+        curr_res = re.findall(r'{0}\s+\t\d+.+\d+'.format(name), output)
         curr_res = list(map(lambda x: float(x.split('\t')[-1]), curr_res))
         metrics_val.append(curr_res)
 
@@ -199,7 +210,8 @@ def evaluate(
         topic_name = get_qrels_file(topic_name)
 
     if metrics is None:
-        metrics = ['recip_rank', 'ndcg_cut_10', 'map', 'recall_100', 'recall_500', 'recall_1000']
+        metrics = ["MRR", "nDCG@10", "MAP", "R@100", "R@500", "R@1000"]
+
     if path_to_reference is None:
         result = evaluate_trec(topic_name, path_to_candidate, metrics)
         if print_result:

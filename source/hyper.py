@@ -25,6 +25,11 @@ from tqdm import tqdm
 from source import DEFAULT_CACHE_DIR
 from source.search import QUERY_NAME_MAPPING, search
 
+PARAMETER_NAME_MAPPING = {
+    "num_pseudo_queries": "Number of pseudo-queries",
+    "num_pseudo_return_hits": "Number of returned pseudo hits",
+}
+
 
 def hyper(
         topic_name: str = 'msmarco-passage-dev-subset',
@@ -134,26 +139,28 @@ def hyper(
     with open(os.path.join(output_path, f"{statistics_name}.json"), "w") as f:
         f.write(json.dumps(statistics, indent=4, sort_keys=True))
 
-    data, i = pd.DataFrame(columns=[parameter_name, "metric", "value"]), 0
+    parameter_name = PARAMETER_NAME_MAPPING[parameter_name]
+
+    data, i = pd.DataFrame(columns=[parameter_name, "metric", "Value"]), 0
     for parameter, metrics in statistics.items():
         for metric, value in metrics.items():
             data.loc[i] = [parameter, metric, value]
             i += 1
-    ax = sns.lineplot(data, x=parameter_name, y="value", hue="metric")
+    ax = sns.lineplot(data, x=parameter_name, y="Value", hue="metric", style="metric", markers=True, dashes=False)
 
-    data, i = pd.DataFrame(columns=[parameter_name, "latency"]), 0
+    data, i = pd.DataFrame(columns=[parameter_name, "Latency(s/query)"]), 0
     for parameter, latency in latencies.items():
         for l in latency:
             data.loc[i] = [parameter, l]
             i += 1
     ax2 = ax.twinx()
-    sns.lineplot(data, x=parameter_name, y="latency", color='grey', ax=ax2)
+    sns.lineplot(data, x=parameter_name, y="Latency(s/query)", color='grey', ax=ax2)
 
     handles, labels = ax.get_legend_handles_labels()
     ax.get_legend().remove()
     ax2.legend(handles + ax2.get_lines(), labels + ['latency'])
 
-    plt.savefig(os.path.join(output_path, f"{statistics_name}.png"))
+    plt.savefig(os.path.join(output_path, f"{statistics_name}.pdf"))
     plt.show()
 
 

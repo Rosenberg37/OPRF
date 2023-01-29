@@ -38,7 +38,14 @@ FAISS_BASELINES = {
         'encoder': 'sebastian-hofstaetter/distilbert-dot-tas_b-b256-msmarco',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.distilbert-kd-tasb-otf.dl19.txt'),
     },
-    'TCT_ColBERTv2': {
+    'TCT-ColBERT': {
+        'threads': 16,
+        'batch_size': 512,
+        'index': 'msmarco-passage-tct_colbert-bf',
+        'encoder': 'castorini/tct_colbert-msmarco',
+        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
+    },
+    'TCT-ColBERTv2': {
         'threads': 16,
         'batch_size': 512,
         'index': 'msmarco-passage-tct_colbert-v2-hnp-bf',
@@ -65,8 +72,13 @@ class AnceQueryBatchEncoder(AnceQueryEncoder):
 
 
 class TctColBertQueryBatchEncoder(QueryEncoder):
-    def __init__(self, encoder_dir: str = None, tokenizer_name: str = None,
-                 encoded_query_dir: str = None, device: str = 'cpu', **kwargs):
+    def __init__(
+            self,
+            encoder_dir: str = None,
+            tokenizer_name: str = None,
+            encoded_query_dir: str = None,
+            device: str = 'cpu'
+    ):
         super().__init__(encoded_query_dir)
         if encoder_dir:
             self.device = device
@@ -271,21 +283,21 @@ def faiss_search(
         searcher,
         batch_topics,
         batch_topic_ids,
-        PRF_FLAG: bool,
+        prf_flag: bool,
         prf_depth: int,
         prf_method: str,
-        prfRule,
+        prf_rule,
         hits: int,
         kwargs: dict,
         threads: int,
 ):
-    if PRF_FLAG:
+    if prf_flag:
         q_embs, prf_candidates = searcher.batch_search(batch_topics, batch_topic_ids, k=prf_depth, return_vector=True, **kwargs)
         # ANCE-PRF input is different, do not need query embeddings
         if prf_method.lower() == 'ance-prf':
-            prf_embs_q = prfRule.get_batch_prf_q_emb(batch_topics, batch_topic_ids, prf_candidates)
+            prf_embs_q = prf_rule.get_batch_prf_q_emb(batch_topics, batch_topic_ids, prf_candidates)
         else:
-            prf_embs_q = prfRule.get_batch_prf_q_emb(batch_topic_ids, q_embs, prf_candidates)
+            prf_embs_q = prf_rule.get_batch_prf_q_emb(batch_topic_ids, q_embs, prf_candidates)
         return searcher.batch_search(prf_embs_q, batch_topic_ids, k=hits, threads=threads, **kwargs)
     else:
         return searcher.batch_search(batch_topics, batch_topic_ids, hits, threads=threads, **kwargs)
@@ -322,6 +334,7 @@ def faiss_main(
         rocchio_bottomk: int = 0,
         sparse_index: str = None,
         ance_prf_encoder: str = None,
+        print_result: bool = False,
 ):
     query_iterator = get_query_iterator(topic_name, TopicsFormat(topics_format))
     topics = query_iterator.topics
@@ -350,14 +363,14 @@ def faiss_main(
         exit()
 
     # Check PRF Flag
-    prfRule = None
+    prf_rule = None
     if prf_depth > 0 and type(searcher) == FaissSearcher:
-        PRF_FLAG = True
+        prf_flag = True
         if prf_method.lower() == 'avg':
-            prfRule = DenseVectorAveragePrf()
+            prf_rule = DenseVectorAveragePrf()
         elif prf_method.lower() == 'rocchio':
-            prfRule = DenseVectorRocchioPrf(rocchio_alpha, rocchio_beta, rocchio_gamma,
-                                            rocchio_topk, rocchio_bottomk)
+            prf_rule = DenseVectorRocchioPrf(rocchio_alpha, rocchio_beta, rocchio_gamma,
+                                             rocchio_topk, rocchio_bottomk)
         # ANCE-PRF is using a new query encoder, so the input to DenseVectorAncePrf is different
         elif prf_method.lower() == 'ance-prf' and type(query_encoder) == AnceQueryEncoder:
             if os.path.exists(sparse_index):
@@ -366,10 +379,9 @@ def faiss_main(
                 sparse_searcher = LuceneSearcher.from_prebuilt_index(sparse_index)
             prf_query_encoder = AnceQueryEncoder(encoder_dir=ance_prf_encoder, tokenizer_name=tokenizer,
                                                  device=device)
-            prfRule = DenseVectorAncePrf(prf_query_encoder, sparse_searcher)
-        print(f'Running FaissSearcher with {prf_method.upper()} PRF...')
+            prf_rule = DenseVectorAncePrf(prf_query_encoder, sparse_searcher)
     else:
-        PRF_FLAG = False
+        prf_flag = False
 
     # build output path
     output_path = output
@@ -392,10 +404,10 @@ def faiss_main(
                     searcher=searcher,
                     batch_topics=batch_topics,
                     batch_topic_ids=batch_topic_ids,
-                    PRF_FLAG=PRF_FLAG,
+                    prf_flag=prf_flag,
                     prf_depth=prf_depth,
                     prf_method=prf_method,
-                    prfRule=prfRule,
+                    prf_rule=prf_rule,
                     hits=hits,
                     kwargs=kwargs,
                     threads=threads
@@ -414,6 +426,6 @@ def faiss_main(
     metrics = evaluate(
         topic_name=EVAL_NAME_MAPPING[topic_name],
         path_to_candidate=output_path,
-        print_result=False,
+        print_result=print_result,
     )
     return results, metrics
