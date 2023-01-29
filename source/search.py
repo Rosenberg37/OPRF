@@ -17,7 +17,7 @@ from pyserini.query_iterator import get_query_iterator, TopicsFormat
 from tqdm import tqdm
 
 from source import BatchSearchResult, DEFAULT_CACHE_DIR
-from source.eval import evaluate
+from source.eval import EVAL_NAME_MAPPING, evaluate
 from source.utils.output import OutputWriter
 from source.utils.pseudo import PseudoQuerySearcher
 
@@ -30,17 +30,6 @@ QUERY_NAME_MAPPING = {
     "dev-doc": "msmarco-doc-dev",
     "dl19-doc": "dl19-doc",
     "dl20-doc": "dl20",
-}
-
-EVAL_NAME_MAPPING = {
-    "msmarco-passage-dev-subset": "msmarco-passage-dev-subset",
-    "dev-passage": "msmarco-passage-dev-subset",
-    "dl19-passage": "dl19-passage",
-    "dl20-passage": "dl20-passage",
-    "msmarco-doc-dev": "msmarco-doc-dev",
-    "dev-doc": "msmarco-doc-dev",
-    "dl19-doc": "dl19-doc",
-    "dl20-doc": "dl20-doc",
 }
 
 

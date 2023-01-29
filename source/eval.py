@@ -9,95 +9,69 @@
 """
 
 import os
+import platform
+import re
+import subprocess
+import tempfile
 from collections import OrderedDict
-from typing import Mapping
+from typing import List, Mapping
 
+import pandas as pd
 from jsonargparse import CLI
+from pyserini.search import get_qrels_file
+from pyserini.util import download_evaluation_script
 from scipy import stats
 from tabulate import tabulate
 
 from source import DEFAULT_CACHE_DIR
 
-TREC_EVAL_SCRIPT_PATH = os.path.join(DEFAULT_CACHE_DIR, "eval", "trec_eval-9.0.7", "trec_eval")
-import os
-import re
-import subprocess
-import platform
-import pandas as pd
-import tempfile
-
-from pyserini.search import get_qrels_file
-from pyserini.util import download_evaluation_script
-
-EVAL_ARGS = {
-    "msmarco-passage-dev-subset": {
-        "recip_rank_10": ['-c', '-M', '10', '-m', 'recip_rank'],
-        "recall.1000": ['-c', '-m', 'recall.1000'],
-    },
-    "dl19-passage": {
-        "recip_rank": ['-c', '-l', '2', '-m', 'recip_rank'],
-        "ndcg_cut.10": ['-c', '-m', 'ndcg_cut.10'],
-        "map": ['-c', '-l', '2', '-m', 'map'],
-        "recall.100": ['-c', '-l', '2', '-m', 'recall.100'],
-        "recall.500": ['-c', '-l', '2', '-m', 'recall.500'],
-        "recall.1000": ['-c', '-l', '2', '-m', 'recall.1000'],
-    },
-    "dl20-passage": {
-        "recip_rank": ['-c', '-l', '2', '-m', 'recip_rank'],
-        "ndcg_cut.10": ['-c', '-m', 'ndcg_cut.10'],
-        "map": ['-c', '-l', '2', '-m', 'map'],
-        "recall.100": ['-c', '-l', '2', '-m', 'recall.100'],
-        "recall.500": ['-c', '-l', '2', '-m', 'recall.500'],
-        "recall.1000": ['-c', '-l', '2', '-m', 'recall.1000'],
-    },
-    "msmarco-doc-dev": {
-        "recip_rank_100": ['-c', '-M', '100', '-m', 'recip_rank'],
-        "recall.1000": ['-c', '-m', 'recall.1000'],
-    },
-    "dl19-doc": {
-        "map_100": ['-c', '-M', '100', '-m', 'map'],
-        "ndcg_cut.10": ['-c', '-m', 'ndcg_cut.10'],
-        "recall.1000": ['-c', '-m', 'recall.1000'],
-        "recall.500": ['-c', '-m', 'recall.500'],
-        "recall.100": ['-c', '-m', 'recall.100'],
-        "recip_rank": ['-c', '-m', 'recip_rank'],
-    },
-    "dl20-doc": {
-        "map_100": ['-c', '-M', '100', '-m', 'map'],
-        "map": ['-c', '-m', 'map'],
-        "ndcg_cut.10": ['-c', '-m', 'ndcg_cut.10'],
-        "recall.1000": ['-c', '-m', 'recall.1000'],
-        "recall.500": ['-c', '-m', 'recall.500'],
-        "recall.100": ['-c', '-m', 'recall.100'],
-        "recip_rank": ['-c', '-m', 'recip_rank'],
-    },
+EVAL_NAME_MAPPING = {
+    "msmarco-passage-dev-subset": "msmarco-passage-dev-subset",
+    "dev-passage": "msmarco-passage-dev-subset",
+    "dl19-passage": "dl19-passage",
+    "dl20-passage": "dl20-passage",
+    "msmarco-doc-dev": "msmarco-doc-dev",
+    "dev-doc": "msmarco-doc-dev",
+    "dl19-doc": "dl19-doc",
+    "dl20-doc": "dl20-doc",
 }
 
+TREC_EVAL_SCRIPT_PATH = os.path.join(DEFAULT_CACHE_DIR, "eval", "trec_eval-9.0.7", "trec_eval")
 
-def evaluate_trec(qrels, res, metric_args_mapping):
+
+def evaluate_trec(qrels, res, metrics):
     """ all_trecs, """
-    results = OrderedDict()
-    for metric, args in metric_args_mapping.items():
-        command = args + [qrels, res]
-        output = trec_eval(command)
-        result = re.findall(r'{0}\s+all.+\d+'.format(args[-1]), output)[0].split('\t')[2].strip()
-        results[metric] = float(result)
-    return results
+    command = ['-c', '-l', '2', '-m', 'all_trec', qrels, res]
+    if 'doc' in qrels:
+        command = ['-c', '-m', 'all_trec', '-q', qrels, res]
+    output = trec_eval(command)
+
+    metrics_val = []
+    for metric in metrics:
+        curr_res = re.findall(r'{0}\s+all.+\d+'.format(metric), output)[0].split('\t')[2].strip()
+        metrics_val.append(float(curr_res))
+
+    return OrderedDict(zip(metrics, metrics_val))
 
 
-def evaluate_trec_per_query(qrels, res, metric_args_mapping):
+def evaluate_trec_per_query(qrels, res, metrics):
     """ all_trecs, """
-    results = OrderedDict()
-    for metric, args in metric_args_mapping.items():
-        command = args + ['-q', qrels, res]
-        output = trec_eval(command)
+
+    command = ['-c', '-l', '2', '-m', 'all_trec', '-q', qrels, res]
+    if 'doc' in qrels:
+        command = ['-c', '-m', 'all_trec', '-q', qrels, res]
+    output = trec_eval(command)
+
+    metrics_val = []
+    for metric in metrics:
         curr_res = re.findall(r'{0}\s+\t\d+.+\d+'.format(metric), output)
         curr_res = list(map(lambda x: float(x.split('\t')[-1]), curr_res))
-        results[metric] = curr_res
-    return results
+        metrics_val.append(curr_res)
+
+    return OrderedDict(zip(metrics, metrics_val))
 
 
-def tt_test(qrels, res1, res2, metrics=None):
+def tt_test(qrels, res1, res2, metrics):
     met_dict1 = evaluate_trec_per_query(qrels, res1, metrics)
     met_dict2 = evaluate_trec_per_query(qrels, res2, metrics)
 
@@ -202,6 +176,7 @@ def evaluate(
         reference_name: str = None,
         path_to_reference: str = None,
         topic_name: str = None,
+        metrics: List[str] = None,
         print_result: bool = False,
 ) -> Mapping[str, float]:
     if candidate_name is not None:
@@ -220,21 +195,20 @@ def evaluate(
             run_path = os.path.join(DEFAULT_CACHE_DIR, "runs")
             path_to_reference = os.path.join(run_path, reference_name)
 
-    metric_args_mapping = EVAL_ARGS[topic_name]
-
     if not os.path.exists(topic_name):
         topic_name = get_qrels_file(topic_name)
 
-    # metrics = ['recip_rank', 'ndcg_cut_10', 'map', 'recall_100', 'recall_500', 'recall_1000']
+    if metrics is None:
+        metrics = ['recip_rank', 'ndcg_cut_10', 'map', 'recall_100', 'recall_500', 'recall_1000']
     if path_to_reference is None:
-        result = evaluate_trec(topic_name, path_to_candidate, metric_args_mapping)
+        result = evaluate_trec(topic_name, path_to_candidate, metrics)
         if print_result:
             print(tabulate({
                 key: [value]
                 for key, value in result.items()
             }, headers='keys', tablefmt='fancy_grid'))
     else:
-        result = tt_test(topic_name, path_to_candidate, path_to_reference, metric_args_mapping)
+        result = tt_test(topic_name, path_to_candidate, path_to_reference, metrics)
         result = pd.DataFrame(result)
         if print_result:
             pd.set_option('display.max_columns', 100)
