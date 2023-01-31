@@ -24,39 +24,6 @@ from source import BatchSearchResult
 from source.eval import EVAL_NAME_MAPPING, evaluate
 from source.utils import SearchResult
 
-LUCENE_BASELINES = {
-    'BM25': {
-        'threads': 16,
-        'batch_size': 128,
-        'index': 'msmarco-v1-passage-slim',
-        'bm25': True,
-        'output': 'run.msmarco-v1-passage.bm25-default.dl19.txt'
-    },
-    'BM25+RM3': {
-        'threads': 16,
-        'batch_size': 128,
-        'index': 'msmarco-v1-passage-full',
-        'bm25': True,
-        'rm3': True,
-        'output': 'run.msmarco-v1-passage.bm25-rm3-default.dl19.txt'
-    },
-    'docT5query': {
-        'threads': 16,
-        'batch_size': 128,
-        'index': 'msmarco-v1-passage-d2q-t5',
-        'bm25': True,
-        'output': 'run.msmarco-v1-passage.bm25-d2q-t5-default.dl19.txt'
-    },
-    'uniCOIL': {
-        'threads': 16,
-        'batch_size': 128,
-        'index': 'msmarco-v1-passage-unicoil',
-        'encoder': 'castorini/unicoil-msmarco-passage',
-        'impact': True,
-        'output': 'run.msmarco-v1-passage.unicoil-otf.dl19.txt'
-    },
-}
-
 
 class LuceneBatchSearcher:
     def __init__(
@@ -142,6 +109,7 @@ class LuceneBatchSearcher:
             for contents, qid in zip(queries, qids):
                 batch_hits[qid] = [SearchResult(qid, 1., contents)]
         else:
+            threads = min(len(queries), threads)
             batch_hits = self.searcher.batch_search(queries, qids, k, threads)
             for key, hits in batch_hits.items():
                 batch_hits[key] = [
@@ -203,7 +171,7 @@ def lucene_main(
         dismax: bool = False,
         tiebreaker: float = 0.0,
         stopwords: str = None,
-        hits: int = 1000,
+        num_return_hits: int = 1000,
         topics_format: str = TopicsFormat.DEFAULT.value,
         output_format: str = OutputFormat.TREC.value,
         max_passage: bool = False,
@@ -307,7 +275,7 @@ def lucene_main(
     tag = output_path[:-4] if output is None else 'Anserini'
 
     output_writer = get_output_writer(output_path, OutputFormat(output_format), 'w',
-                                      max_hits=hits, tag=tag, topics=topics,
+                                      max_hits=num_return_hits, tag=tag, topics=topics,
                                       use_max_passage=max_passage,
                                       max_passage_delimiter=max_passage_delimiter,
                                       max_passage_hits=max_passage_hits)
@@ -324,7 +292,7 @@ def lucene_main(
                     searcher=searcher,
                     batch_topics=batch_topics,
                     batch_topic_ids=batch_topic_ids,
-                    hits=hits,
+                    hits=num_return_hits,
                     threads=threads,
                     fields=fields,
                     query_generator=query_generator

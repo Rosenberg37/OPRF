@@ -8,7 +8,7 @@
     ...
 """
 import os
-from typing import Dict, List, Union
+from typing import Dict, List, Tuple, Union
 
 import numpy as np
 
@@ -48,11 +48,11 @@ class HybridBatchSearcher:
 
     def batch_search(
             self,
-            queries: Union[List[str], np.ndarray],
+            queries: List[str],
             q_ids: List[str],
             k: int = 10,
             threads: int = 1,
-    ) -> Dict[str, Dict[str, List[SearchResult]]]:
+    ) -> Dict[Tuple[str, str], List[SearchResult]]:
         """
 
         Parameters
@@ -71,10 +71,11 @@ class HybridBatchSearcher:
         Dict[str, list[tuple]]
             return a dict contains key to list of SearchResult
         """
-        final_hits = {q_id: {name: None for name in self.encoder_names} for q_id in q_ids}
+        threads = min(len(queries), threads)
+        final_hits = dict()
         for name, searcher in zip(self.encoder_names, self.searchers):
             batch_hits = searcher.batch_search(queries, q_ids, k=k, threads=threads)
             for q_id, hits in batch_hits.items():
-                final_hits[q_id][name] = hits
+                final_hits[q_id, name] = hits
 
         return final_hits

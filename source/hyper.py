@@ -158,7 +158,7 @@ def hyper(
 
     handles, labels = ax.get_legend_handles_labels()
     ax.get_legend().remove()
-    ax2.legend(handles + ax2.get_lines(), labels + ['latency'])
+    ax2.legend(handles + ax2.get_lines(), labels + ['Latency'])
 
     plt.savefig(os.path.join(output_path, f"{statistics_name}.pdf"))
     plt.show()

@@ -10,17 +10,12 @@
 import os
 from typing import List, Tuple, Union
 
-import torch
+import numpy as np
+from scipy.special import softmax
 
-from source import BatchSearchResult, DEFAULT_CACHE_DIR
-from source.utils import SearchResult
+from source import BatchSearchResult, DEFAULT_CACHE_DIR, SearchResult
 from source.utils.hybrid import HybridBatchSearcher
 from source.utils.lucene import LuceneBatchSearcher
-
-DENSE_TO_SPARSE = {
-    "msmarco-passage-tct_colbert-v2-hnp-bf": "msmarco-v1-passage-d2q-t5-docvectors",
-    "msmarco-passage-ance-bf": "msmarco-v1-passage-d2q-t5-docvectors",
-}
 
 
 class PseudoQuerySearcher:
@@ -79,7 +74,6 @@ class PseudoQuerySearcher:
             batch_qids: List[str],
             num_pseudo_queries: int = 4,
             num_pseudo_return_hits: int = 1000,
-            return_pseudo_hits: bool = False,
             threads: int = 1,
     ) -> Union[BatchSearchResult, Tuple[BatchSearchResult, BatchSearchResult]]:
         """Search the collection concurrently for multiple queries, using multiple threads.
@@ -96,8 +90,6 @@ class PseudoQuerySearcher:
             Number of hits to return by each pseudo query.
         threads : int
             Maximum number of threads to use.
-        return_pseudo_hits:
-            whether return the pseudo queries hit in the first stage.
 
         Returns
         -------
@@ -125,73 +117,56 @@ class PseudoQuerySearcher:
             k=num_pseudo_return_hits,
             threads=threads
         )  # hits of pseudo query, result in documents
-        total_pseudo_mins = {
-            q_id: {
-                name: min(hit.score for hit in hits)
-                for name, hits in query_hits.items()
-            } for q_id, query_hits in total_pseudo_hits.items()
-        }
+
+        for key, pseudo_hits in total_pseudo_hits.items():
+            max, min = -1e8, 1e8
+            for hit in pseudo_hits:
+                doc_score = hit.score
+                if doc_score < min:
+                    min = doc_score
+                if doc_score > max:
+                    max = doc_score
+
+            norm = max - min
+            for hit in pseudo_hits:
+                hit.score = (hit.score - min) / norm
+
+        encoder_names = self.searcher_pseudo.encoder_names
+        encoder_names_len = len(encoder_names)
 
         # Aggregate and generate final results
         batch_final_hits: BatchSearchResult = dict()
-        for i, (query_id, query_hits) in enumerate(batch_query_hits.items()):
-            pseudo2score = dict()  # from pseudo query to query hit score
-            doc2scores = dict()  # from document to hit scores
-
+        for query_id, query_hits in batch_query_hits.items():
+            pseudo_ids, pseudo_texts, pseudo_scores = list(), list(), list()
             for query_hit in query_hits:
-                pseudo_id, pseudo_score = query_hit.docid, query_hit.score
-                pseudo2score[pseudo_id] = pseudo_score
+                pseudo_ids.append(query_hit.docid)
+                pseudo_texts.append(query_hit.contents)
+                pseudo_scores.append(query_hit.score)
 
-                for name, pseudo_hits in total_pseudo_hits[pseudo_id].items():
-                    for pseudo_hit in pseudo_hits:
-                        doc_id, doc_score = pseudo_hit.docid, pseudo_hit.score
-                        if doc_id not in doc2scores:
-                            doc2scores[doc_id] = {name: {pseudo_id: doc_score}}
-                        elif name not in doc2scores[doc_id]:
-                            doc2scores[doc_id][name] = {pseudo_id: doc_score}
-                        else:
-                            doc2scores[doc_id][name][pseudo_id] = doc_score
+            doc_ids, doc_score_mappings = set(), list()
+            for pseudo_id in pseudo_ids:
+                for name in encoder_names:
+                    mapping = dict()
+                    for hit in total_pseudo_hits[pseudo_id, name]:
+                        doc_id, doc_score = hit.docid, hit.score
+                        doc_ids.add(hit.docid)
+                        mapping[doc_id] = doc_score
+                    doc_score_mappings.append(mapping)
 
-            doc_ids, doc_scores_matrix = list(), list()
-            for doc_id, doc2scores_ in doc2scores.items():  # generate padding score list
-                doc_ids.append(doc_id)
-                scores_matrix = list()
-
-                for name in tuple(total_pseudo_hits.values())[0].keys():
-                    if name not in doc2scores_:
-                        scores_matrix.append([
-                            total_pseudo_mins[pseudo_id][name]
-                            for pseudo_id in pseudo2score.keys()
-                        ])
-                    else:
-                        scores_matrix.append([
-                            doc2scores_[name].get(pseudo_id, total_pseudo_mins[pseudo_id][name])
-                            for pseudo_id in pseudo2score.keys()
-                        ])
-
-                doc_scores_matrix.append(scores_matrix)
-
-            pseudo_score = torch.as_tensor(list(pseudo2score.values()), device=self.device)
-            doc_scores_matrix = torch.as_tensor(doc_scores_matrix, device=self.device)
-
-            if doc_scores_matrix.dim() == 3:
-                pseudo_score = pseudo_score.repeat(doc_scores_matrix.shape[1])
-                doc_scores_matrix = doc_scores_matrix.flatten(start_dim=1)
+            pseudo_scores = np.asarray(pseudo_scores).repeat(encoder_names_len)
+            doc_scores = np.asarray([
+                [
+                    mapping.get(id, 0)
+                    for id in doc_ids
+                ] for mapping in doc_score_mappings
+            ])
 
             # Aggregation
-            doc_scores_matrix = pseudo_score.unsqueeze(0) + doc_scores_matrix
-            max_score = torch.max(doc_scores_matrix, dim=0, keepdim=True)[0]
-            min_score = torch.min(doc_scores_matrix, dim=0, keepdim=True)[0]
-            doc_scores_matrix = (doc_scores_matrix - (max_score + min_score) / 2) / (max_score - min_score)
-            coefficient = torch.softmax(pseudo_score, dim=-1).unsqueeze(0)
-            doc_scores_matrix = torch.sum(doc_scores_matrix * coefficient, 1)
+            pseudo_scores = np.expand_dims(softmax(pseudo_scores, axis=0), axis=1)
+            doc_scores = np.sum(doc_scores * pseudo_scores, axis=0)
 
-            final_hits = [SearchResult(doc_id, doc_score.item(), None) for doc_id, doc_score in zip(doc_ids, doc_scores_matrix)]
+            final_hits = [SearchResult(doc_id, doc_score, None) for doc_id, doc_score in zip(doc_ids, doc_scores)]
             final_hits = sorted(final_hits, key=lambda hit: hit.score, reverse=True)
             batch_final_hits[query_id] = final_hits
 
-        # Return results
-        if return_pseudo_hits:
-            return batch_final_hits, batch_query_hits
-        else:
-            return batch_final_hits
+        return batch_final_hits, batch_query_hits

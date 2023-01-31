@@ -25,41 +25,9 @@ from pyserini.search.faiss.__main__ import init_query_encoder
 from tqdm import tqdm
 from transformers import BertModel, BertTokenizerFast
 
-from source import DEFAULT_CACHE_DIR
 from source.eval import EVAL_NAME_MAPPING, evaluate
 from source.utils import SearchResult
 from source.utils.lucene import LuceneBatchSearcher
-
-FAISS_BASELINES = {
-    'DistilBERT KD TASB': {
-        'threads': 16,
-        'batch_size': 512,
-        'index': 'msmarco-passage-distilbert-dot-tas_b-b256-bf',
-        'encoder': 'sebastian-hofstaetter/distilbert-dot-tas_b-b256-msmarco',
-        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.distilbert-kd-tasb-otf.dl19.txt'),
-    },
-    'TCT-ColBERT': {
-        'threads': 16,
-        'batch_size': 512,
-        'index': 'msmarco-passage-tct_colbert-bf',
-        'encoder': 'castorini/tct_colbert-msmarco',
-        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
-    },
-    'TCT-ColBERTv2': {
-        'threads': 16,
-        'batch_size': 512,
-        'index': 'msmarco-passage-tct_colbert-v2-hnp-bf',
-        'encoder': 'castorini/tct_colbert-v2-hnp-msmarco',
-        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
-    },
-    'ANCE': {
-        'threads': 16,
-        'batch_size': 512,
-        'index': 'msmarco-passage-ance-bf',
-        'encoder': 'castorini/ance-msmarco-passage',
-        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.ance-otf.dl19.txt'),
-    }
-}
 
 IMPACT_ENCODERS = {
     "castorini/unicoil-msmarco-passage",
@@ -300,14 +268,14 @@ def faiss_search(
             prf_embs_q = prf_rule.get_batch_prf_q_emb(batch_topic_ids, q_embs, prf_candidates)
         return searcher.batch_search(prf_embs_q, batch_topic_ids, k=hits, threads=threads, **kwargs)
     else:
-        return searcher.batch_search(batch_topics, batch_topic_ids, hits, threads=threads, **kwargs)
+        return searcher.batch_search(batch_topics, batch_topic_ids, k=hits, threads=threads, **kwargs)
 
 
 def faiss_main(
         index: str,
         topic_name: str,
         output: str,
-        hits: int = 1000,
+        num_return_hits: int = 1000,
         binary_hits: int = 1000,
         rerank: bool = False,
         topics_format: str = TopicsFormat.DEFAULT.value,
@@ -388,7 +356,7 @@ def faiss_main(
 
     tag = 'Faiss'
     output_writer = get_output_writer(output_path, OutputFormat(output_format), 'w',
-                                      max_hits=hits, tag=tag, topics=topics,
+                                      max_hits=num_return_hits, tag=tag, topics=topics,
                                       use_max_passage=max_passage,
                                       max_passage_delimiter=max_passage_delimiter,
                                       max_passage_hits=max_passage_hits)
@@ -408,7 +376,7 @@ def faiss_main(
                     prf_depth=prf_depth,
                     prf_method=prf_method,
                     prf_rule=prf_rule,
-                    hits=hits,
+                    hits=num_return_hits,
                     kwargs=kwargs,
                     threads=threads
                 )

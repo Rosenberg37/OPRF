@@ -22,8 +22,90 @@ from pyserini.query_iterator import get_query_iterator, TopicsFormat
 
 from source import DEFAULT_CACHE_DIR
 from source.search import QUERY_NAME_MAPPING, search
-from source.utils.faiss import FAISS_BASELINES, faiss_main
-from source.utils.lucene import LUCENE_BASELINES, lucene_main
+from source.utils.faiss import faiss_main
+from source.utils.lucene import lucene_main
+
+FAISS_BASELINES = {
+    'DistilBERT-KD-TASB': {
+        'index': 'msmarco-passage-distilbert-dot-tas_b-b256-bf',
+        'encoder': 'sebastian-hofstaetter/distilbert-dot-tas_b-b256-msmarco',
+        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.distilbert-kd-tasb-otf.dl19.txt'),
+    },
+    'TCT-ColBERT': {
+        'index': 'msmarco-passage-tct_colbert-bf',
+        'encoder': 'castorini/tct_colbert-msmarco',
+        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
+    },
+    'TCT-ColBERTv2': {
+        'index': 'msmarco-passage-tct_colbert-v2-hnp-bf',
+        'encoder': 'castorini/tct_colbert-v2-hnp-msmarco',
+        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
+    },
+    'ANCE': {
+        'index': 'msmarco-passage-ance-bf',
+        'encoder': 'castorini/ance-msmarco-passage',
+        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.ance-otf.dl19.txt'),
+    },
+    'DistilBERT-KD-TASB PRF': {
+        'index': 'msmarco-passage-distilbert-dot-tas_b-b256-bf',
+        'encoder': 'sebastian-hofstaetter/distilbert-dot-tas_b-b256-msmarco',
+        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.distilbert-kd-tasb-otf.dl19.txt'),
+        'prf_depth': 3,
+        'prf_method': 'avg',
+    },
+    'TCT-ColBERT PRF': {
+        'index': 'msmarco-passage-tct_colbert-bf',
+        'encoder': 'castorini/tct_colbert-msmarco',
+        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
+        'prf_depth': 3,
+        'prf_method': 'avg',
+    },
+    'TCT-ColBERTv2 PRF': {
+        'index': 'msmarco-passage-tct_colbert-v2-hnp-bf',
+        'encoder': 'castorini/tct_colbert-v2-hnp-msmarco',
+        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
+        'prf_depth': 3,
+        'prf_method': 'avg',
+    },
+    'ANCE PRF': {
+        'index': 'msmarco-passage-ance-bf',
+        'encoder': 'castorini/ance-msmarco-passage',
+        'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.ance-otf.dl19.txt'),
+        'prf_depth': 3,
+        'prf_method': 'avg',
+    }
+}
+LUCENE_BASELINES = {
+    'BM25': {
+        'index': 'msmarco-v1-passage-slim',
+        'bm25': True,
+        'output': 'run.msmarco-v1-passage.bm25-default.dl19.txt'
+    },
+    'BM25+RM3': {
+        'index': 'msmarco-v1-passage-full',
+        'bm25': True,
+        'rm3': True,
+        'output': 'run.msmarco-v1-passage.bm25-rm3-default.dl19.txt'
+    },
+    'docT5query': {
+        'index': 'msmarco-v1-passage-d2q-t5',
+        'bm25': True,
+        'output': 'run.msmarco-v1-passage.bm25-d2q-t5-default.dl19.txt'
+    },
+    'uniCOIL': {
+        'index': 'msmarco-v1-passage-unicoil',
+        'encoder': 'castorini/unicoil-msmarco-passage',
+        'impact': True,
+        'output': 'run.msmarco-v1-passage.unicoil-otf.dl19.txt'
+    },
+}
+PRF_BASELINES = {
+    'BM25+RM3',
+    'DistilBERT-KD-TASB PRF',
+    'TCT-ColBERT PRF',
+    'TCT-ColBERTv2 PRF',
+    'ANCE PRF',
+}
 
 
 def measure(
@@ -32,7 +114,7 @@ def measure(
         search: Callable,
         key_filter: Callable,
 ):
-    metric, total_latency = 0, 0
+    metric, latencies = 0, list()
     for i in range(num_repeat):
         with cProfile.Profile() as profile:
             metrics: Mapping[str, float] = search()
@@ -44,10 +126,12 @@ def measure(
                 if key_filter(key):
                     search_func_key = key
 
-            total_latency = stats.stats[search_func_key][3]
+            latency = stats.stats[search_func_key][3]
             metric = metrics[metric_name]
-            total_latency += total_latency
-    return metric, total_latency / num_repeat
+            latencies.append(latency)
+
+    latencies = sorted(latencies)
+    return metric, latencies[num_repeat // 2]
 
 
 def latency(
@@ -90,32 +174,29 @@ def latency(
     query_iterator = get_query_iterator(QUERY_NAME_MAPPING[topic_name], TopicsFormat.DEFAULT)
     query_length = len(query_iterator)
 
-    statistics = {
-        "Ours(GPU)": [0., 0.],
-        "Ours(CPU)": [0., 0.]
-    }
+    statistics = dict()
 
-    baselines = FAISS_BASELINES.copy()
-    baselines.update(LUCENE_BASELINES)
-
+    baselines = {**LUCENE_BASELINES, **FAISS_BASELINES}
     for name, kargs in baselines.items():
-        statistics[name] = [0., 0.]
         kargs['topic_name'] = topic_name
+        kargs['batch_size'] = batch_size
+        kargs['threads'] = threads
+        kargs['print_result'] = False
+
         if name in FAISS_BASELINES:
-            search_func = lambda: faiss_main(print_result=False, **kargs)[-1]
+            search_func = lambda: faiss_main(device=device, **kargs)[-1]
         elif name in LUCENE_BASELINES:
-            search_func = lambda: lucene_main(print_result=False, **kargs)[-1]
+            search_func = lambda: lucene_main(**kargs)[-1]
         else:
             raise RuntimeError(f"Unexpected {name}")
 
-        metric, total_latency = measure(
+        metric, latency = measure(
             num_repeat, metric_name,
             search=search_func,
             key_filter=lambda key: ("faiss.py" in key and 'faiss_search' in key) or ("lucene.py" in key and 'lucene_search' in key),
         )
 
-        statistics[name][0] = metric
-        statistics[name][1] = total_latency / query_length
+        statistics[name] = [metric, latency / query_length]
 
     kargs = {
         "topic_name": topic_name,
@@ -132,40 +213,33 @@ def latency(
         "print_result": False,
     }
 
-    metric, total_latency = measure(
+    metric, latency = measure(
         num_repeat, metric_name,
-        search=lambda: search(device=device, **kargs)[-1],
+        search=lambda: search(**kargs)[-1],
         key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
     )
-    statistics["Ours(GPU)"][0] = metric
-    statistics["Ours(GPU)"][1] = total_latency / query_length
-
-    metric, total_latency = measure(
-        num_repeat, metric_name,
-        search=lambda: search(device='cpu', **kargs)[-1],
-        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
-    )
-    statistics["Ours(CPU)"][0] = metric
-    statistics["Ours(CPU)"][1] = total_latency / query_length
+    statistics["Ours"] = [metric, latency / query_length]
 
     with open(os.path.join(output_path, "statistics.latency.json"), "w") as f:
         f.write(json.dumps(statistics, indent=4, sort_keys=True))
 
     data, i = pd.DataFrame(columns=[metric_name, "Latency(s/query)", "Architecture"]), 0
-    for name, (map, total_latency) in statistics.items():
-        if name in FAISS_BASELINES:
+    for name, (map, latency) in statistics.items():
+        if name in PRF_BASELINES:
+            arc = "Pseudo Relevance Feedback"
+        elif name in FAISS_BASELINES:
             arc = "Dense Retrieval"
         elif name in LUCENE_BASELINES:
             arc = "Sparse Retrieval"
         else:
             arc = name
 
-        data.loc[i] = [map, total_latency, arc]
+        data.loc[i] = [map, latency, arc]
         i += 1
 
     sns.scatterplot(data=data, x=metric_name, y="Latency(s/query)", hue="Architecture", style="Architecture")
-    for name, (map, total_latency) in statistics.items():
-        plt.text(map - .008, total_latency + .005, name)
+    for name, (map, latency) in statistics.items():
+        plt.text(map - .008, latency + .005, name)
 
     plt.savefig(os.path.join(output_path, f"latency.pdf"))
     plt.show()

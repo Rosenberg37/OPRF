@@ -161,7 +161,6 @@ def search(
                 num_pseudo_queries=num_pseudo_queries,
                 num_pseudo_return_hits=num_pseudo_return_hits,
                 threads=threads,
-                return_pseudo_hits=True,
             )
 
             query_hits.update(batch_query_hits), pseudo_hits.update(batch_pseudo_hits)
