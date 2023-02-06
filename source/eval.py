@@ -26,15 +26,17 @@ from tabulate import tabulate
 from source import DEFAULT_CACHE_DIR
 
 TREC_EVAL_SCRIPT_PATH = os.path.join(DEFAULT_CACHE_DIR, "eval", "trec_eval-9.0.7", "trec_eval")
-EVAL_NAME_MAPPING = {
+TOPIC_NAME_MAPPING = {
     "msmarco-passage-dev-subset": "msmarco-passage-dev-subset",
     "dev-passage": "msmarco-passage-dev-subset",
     "dl19-passage": "dl19-passage",
     "dl20-passage": "dl20-passage",
+    "dlhard-passage": os.path.join(os.path.expanduser('~'), '.cache', 'pyserini', 'topics-and-qrels', 'qrels.dl_hard-passage.tsv'),
     "msmarco-doc-dev": "msmarco-doc-dev",
     "dev-doc": "msmarco-doc-dev",
     "dl19-doc": "dl19-doc",
     "dl20-doc": "dl20-doc",
+    "dlhard-doc": os.path.join(os.path.expanduser('~'), '.cache', 'pyserini', 'topics-and-qrels', 'qrels.dl_hard-passage.tsv'),
 }
 METRIC_NAME_MAPPING = {
     "MRR": 'recip_rank',
@@ -206,6 +208,7 @@ def evaluate(
             run_path = os.path.join(DEFAULT_CACHE_DIR, "runs")
             path_to_reference = os.path.join(run_path, reference_name)
 
+    topic_name = TOPIC_NAME_MAPPING[topic_name]
     if not os.path.exists(topic_name):
         topic_name = get_qrels_file(topic_name)
 

@@ -19,7 +19,7 @@ from pyserini.query_iterator import get_query_iterator, TopicsFormat
 from tqdm import tqdm
 
 from source import BatchSearchResult, DEFAULT_CACHE_DIR
-from source.utils.lucene import LuceneBatchSearcher
+from source.utils.sparse import LuceneBatchSearcher
 
 TOPIC_NAME_MAPPING = {
     "dev": 'msmarco-passage-dev-subset',

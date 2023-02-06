@@ -15,6 +15,7 @@ import faiss
 import numpy as np
 import torch
 from diskcache import Cache
+from jsonargparse import CLI
 from pyserini.dsearch import BinaryDenseSearcher
 from pyserini.encode import AnceQueryEncoder, PcaEncoder
 from pyserini.output_writer import get_output_writer, OutputFormat
@@ -25,9 +26,9 @@ from pyserini.search.faiss.__main__ import init_query_encoder
 from tqdm import tqdm
 from transformers import BertModel, BertTokenizerFast
 
-from source.eval import EVAL_NAME_MAPPING, evaluate
-from source.utils import SearchResult
-from source.utils.lucene import LuceneBatchSearcher
+from source.eval import evaluate
+from source.utils import QUERY_NAME_MAPPING, SearchResult
+from source.utils.sparse import LuceneBatchSearcher
 
 IMPACT_ENCODERS = {
     "castorini/unicoil-msmarco-passage",
@@ -302,9 +303,9 @@ def faiss_main(
         rocchio_bottomk: int = 0,
         sparse_index: str = None,
         ance_prf_encoder: str = None,
-        print_result: bool = False,
+        print_result: bool = True,
 ):
-    query_iterator = get_query_iterator(topic_name, TopicsFormat(topics_format))
+    query_iterator = get_query_iterator(QUERY_NAME_MAPPING[topic_name], TopicsFormat(topics_format))
     topics = query_iterator.topics
 
     query_encoder = init_query_encoder(
@@ -392,8 +393,12 @@ def faiss_main(
             results.clear()
 
     metrics = evaluate(
-        topic_name=EVAL_NAME_MAPPING[topic_name],
+        topic_name=topic_name,
         path_to_candidate=output_path,
         print_result=print_result,
     )
     return results, metrics
+
+
+if __name__ == '__main__':
+    CLI(faiss_main)

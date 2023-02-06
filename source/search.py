@@ -17,20 +17,10 @@ from pyserini.query_iterator import get_query_iterator, TopicsFormat
 from tqdm import tqdm
 
 from source import BatchSearchResult, DEFAULT_CACHE_DIR
-from source.eval import EVAL_NAME_MAPPING, evaluate
+from source.eval import evaluate
+from source.utils import QUERY_NAME_MAPPING
 from source.utils.output import OutputWriter
 from source.utils.pseudo import PseudoQuerySearcher
-
-QUERY_NAME_MAPPING = {
-    "msmarco-passage-dev-subset": "msmarco-passage-dev-subset",
-    "dev-passage": "msmarco-passage-dev-subset",
-    "dl19-passage": "dl19-passage",
-    "dl20-passage": "dl20",
-    "msmarco-doc-dev": "msmarco-doc-dev",
-    "dev-doc": "msmarco-doc-dev",
-    "dl19-doc": "dl19-doc",
-    "dl20-doc": "dl20",
-}
 
 
 def search(
@@ -58,6 +48,7 @@ def search(
         max_passage_delimiter: str = '#',
         output_path: str = os.path.join(DEFAULT_CACHE_DIR, "runs"),
         reference_name: str = None,
+        metrics: List[str] = None,
         print_result: bool = True,
         threads: int = cpu_count(),
         batch_size: int = cpu_count(),
@@ -88,6 +79,7 @@ def search(
     :param max_passage_hits: Final number of hits when selecting only max passage.
     :param max_passage_delimiter: Delimiter between docid and passage id.
     :param reference_name: Reference name left for the evaluation of p-value
+    :param metrics: metrics that play evaluation on.
     :param print_result: whether print the evaluation result.
     :param threads: maximum threads to use during search
     :param batch_size: batch size used for the batch search.
@@ -120,7 +112,7 @@ def search(
         device=device
     )
 
-    if topic_name not in QUERY_NAME_MAPPING or topic_name not in EVAL_NAME_MAPPING:
+    if topic_name not in QUERY_NAME_MAPPING:
         raise ValueError(f"{topic_name} is current not supported.")
     query_iterator = get_query_iterator(QUERY_NAME_MAPPING[topic_name], TopicsFormat.DEFAULT)
 
@@ -171,10 +163,11 @@ def search(
         output_writer.write(query_hits, pseudo_hits, queries_ids)
 
     metrics = evaluate(
-        topic_name=EVAL_NAME_MAPPING[topic_name],
+        topic_name=topic_name,
         path_to_candidate=run_path,
         reference_name=reference_name,
-        print_result=print_result
+        metrics=metrics,
+        print_result=print_result,
     )
     return query_hits, pseudo_hits, metrics
 

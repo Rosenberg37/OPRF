@@ -11,6 +11,7 @@ import json
 import os
 from typing import List
 
+from jsonargparse import CLI
 from pyserini.analysis import JDefaultEnglishAnalyzer, JWhiteSpaceAnalyzer
 from pyserini.output_writer import get_output_writer, OutputFormat
 from pyserini.query_iterator import get_query_iterator, TopicsFormat
@@ -21,8 +22,8 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from source import BatchSearchResult
-from source.eval import EVAL_NAME_MAPPING, evaluate
-from source.utils import SearchResult
+from source.eval import evaluate
+from source.utils import QUERY_NAME_MAPPING, SearchResult
 
 
 class LuceneBatchSearcher:
@@ -185,7 +186,7 @@ def lucene_main(
         remove_query: bool = False,
         print_result: bool = True,
 ):
-    query_iterator = get_query_iterator(topic_name, TopicsFormat(topics_format))
+    query_iterator = get_query_iterator(QUERY_NAME_MAPPING[topic_name], TopicsFormat(topics_format))
     topics = query_iterator.topics
 
     if not impact:
@@ -334,8 +335,12 @@ def lucene_main(
             results.clear()
 
     metrics = evaluate(
-        topic_name=EVAL_NAME_MAPPING[topic_name],
+        topic_name=topic_name,
         path_to_candidate=output_path,
         print_result=print_result,
     )
     return results, metrics
+
+
+if __name__ == '__main__':
+    CLI(lucene_main)

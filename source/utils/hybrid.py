@@ -13,7 +13,7 @@ from typing import Dict, List, Tuple, Union
 import numpy as np
 
 from source import SearchResult
-from source.utils.faiss import FaissBatchSearcher
+from source.utils.dense import FaissBatchSearcher
 
 
 class HybridBatchSearcher:

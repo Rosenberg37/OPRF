@@ -15,7 +15,7 @@ from scipy.special import softmax
 
 from source import BatchSearchResult, DEFAULT_CACHE_DIR, SearchResult
 from source.utils.hybrid import HybridBatchSearcher
-from source.utils.lucene import LuceneBatchSearcher
+from source.utils.sparse import LuceneBatchSearcher
 
 
 class PseudoQuerySearcher:

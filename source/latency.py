@@ -21,9 +21,10 @@ from jsonargparse import CLI
 from pyserini.query_iterator import get_query_iterator, TopicsFormat
 
 from source import DEFAULT_CACHE_DIR
-from source.search import QUERY_NAME_MAPPING, search
-from source.utils.faiss import faiss_main
-from source.utils.lucene import lucene_main
+from source.search import search
+from source.utils import QUERY_NAME_MAPPING
+from source.utils.dense import faiss_main
+from source.utils.sparse import lucene_main
 
 FAISS_BASELINES = {
     'DistilBERT-KD-TASB': {

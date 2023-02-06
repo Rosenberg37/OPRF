@@ -23,7 +23,8 @@ from pyserini.query_iterator import get_query_iterator, TopicsFormat
 from tqdm import tqdm
 
 from source import DEFAULT_CACHE_DIR
-from source.search import QUERY_NAME_MAPPING, search
+from source.search import search
+from source.utils import QUERY_NAME_MAPPING
 
 PARAMETER_NAME_MAPPING = {
     "num_pseudo_queries": "Number of pseudo-queries",
@@ -48,6 +49,7 @@ def hyper(
         max_passage: bool = False,
         max_passage_hits: int = 1000,
         num_repeat_latency: int = 5,
+        metrics: List[str] = None,
         threads: int = cpu_count(),
         batch_size: int = cpu_count(),
         device: str = "cpu",
@@ -72,6 +74,7 @@ def hyper(
     :param max_passage: Select only max passage from document.
     :param max_passage_hits: Final number of hits when selecting only max passage.
     :param num_repeat_latency: num of times for repeat measure latency.
+    :param metrics: metrics that play evaluation on.
     :param threads: maximum threads to use during search
     :param batch_size: batch size used for the batch search.
     :param device: the device the whole search procedure will on
@@ -108,6 +111,7 @@ def hyper(
         "device": device,
         "max_passage": max_passage,
         "max_passage_hits": max_passage_hits,
+        "metrics": metrics,
     }
 
     output_path = os.path.join(DEFAULT_CACHE_DIR, "runs", "hyper")

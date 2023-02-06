@@ -19,8 +19,8 @@ from pyserini.search import DenseVectorAveragePrf, DenseVectorRocchioPrf, FaissS
 from tqdm import tqdm
 
 from source import DEFAULT_CACHE_DIR, SearchResult
-from source.utils.faiss import IMPACT_ENCODERS, init_query_encoder
-from source.utils.lucene import LuceneBatchSearcher
+from source.utils.dense import IMPACT_ENCODERS, init_query_encoder
+from source.utils.sparse import LuceneBatchSearcher
 
 
 class JsonlQueryIterator:
