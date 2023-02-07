@@ -25,13 +25,9 @@ from source.utils.pseudo import PseudoQuerySearcher
 
 def search(
         topic_name: str = 'msmarco-passage-dev-subset',
-        query_rm3: bool = False,
-        query_rocchio: bool = False,
-        query_rocchio_use_negative: bool = False,
         pseudo_name: str = 'msmarco_v1_passage_doc2query-t5_expansions_-1',
         pseudo_index_dir: str = None,
         num_pseudo_queries: int = 8,
-        add_query_to_pseudo: bool = False,
         num_pseudo_return_hits: int = 1000,
         pseudo_encoder_name: Union[str, List[str]] = "lucene",
         pseudo_prf_depth: int = 0,
@@ -41,7 +37,13 @@ def search(
         pseudo_rocchio_gamma: float = 0.1,
         pseudo_rocchio_topk: int = 3,
         pseudo_rocchio_bottomk: int = 0,
-        doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
+        query_index: str = None,
+        query_k1: float = None,
+        query_b: float = None,
+        query_rm3: bool = False,
+        query_rocchio: bool = False,
+        query_rocchio_use_negative: bool = False,
+        pseudo_doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
         num_return_hits: int = 1000,
         max_passage: bool = False,
         max_passage_hits: int = 1000,
@@ -57,13 +59,15 @@ def search(
     """
 
     :param topic_name: Name of topics.
+    :param query_b: bm25 b for original query search
+    :param query_k1: bm25 k1 for original query search
     :param query_rm3: whether the rm3 algorithm used for the first stage search.
     :param query_rocchio: whether the rocchio algorithm used for the first stage search.
     :param query_rocchio_use_negative: whether the rocchio algorithm with negative used for the first stage search.
     :param pseudo_name: index name of the candidate pseudo queries
     :param pseudo_index_dir: index path to the candidate pseudo queries.
     :param num_pseudo_queries: how many pseudo query used for second stage
-    :param add_query_to_pseudo: whether add query into pseudo query for search
+    :param query_index: the index original query to perform sparse retrieval
     :param num_pseudo_return_hits: Number of hits to return by each pseudo query.
     :param pseudo_encoder_name: Path to query encoder pytorch checkpoint or hgf encoder model name
     :param pseudo_prf_depth: Specify how many passages are used for PRF, 0: Simple retrieval with no PRF, > 0: perform PRF
@@ -73,7 +77,7 @@ def search(
     :param pseudo_rocchio_gamma: The gamma parameter to control the contribution from the average vector of the negative PRF passages
     :param pseudo_rocchio_topk: Set topk passages as positive PRF passages for rocchio
     :param pseudo_rocchio_bottomk: Set bottomk passages as negative PRF passages for rocchio, 0: do not use negatives prf passages.
-    :param doc_index: the index of the candidate documents
+    :param pseudo_doc_index: the index of the candidate documents
     :param num_return_hits: how many hits will be returned
     :param max_passage: Select only max passage from document.
     :param max_passage_hits: Final number of hits when selecting only max passage.
@@ -96,11 +100,7 @@ def search(
         raise ValueError("At least specify pseudo_name or pseudo_index")
 
     searcher = PseudoQuerySearcher(
-        pseudo_index_dir, doc_index,
-        query_rm3=query_rm3,
-        query_rocchio=query_rocchio,
-        query_rocchio_use_negative=query_rocchio_use_negative,
-        add_query_to_pseudo=add_query_to_pseudo,
+        pseudo_index_dir, pseudo_doc_index,
         pseudo_encoder_name=pseudo_encoder_name,
         pseudo_prf_depth=pseudo_prf_depth,
         pseudo_prf_method=pseudo_prf_method,
@@ -109,6 +109,12 @@ def search(
         pseudo_rocchio_gamma=pseudo_rocchio_gamma,
         pseudo_rocchio_topk=pseudo_rocchio_topk,
         pseudo_rocchio_bottomk=pseudo_rocchio_bottomk,
+        query_index=query_index,
+        query_k1=query_k1,
+        query_b=query_b,
+        query_rm3=query_rm3,
+        query_rocchio=query_rocchio,
+        query_rocchio_use_negative=query_rocchio_use_negative,
         device=device
     )
 

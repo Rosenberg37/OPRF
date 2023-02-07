@@ -47,28 +47,28 @@ FAISS_BASELINES = {
         'encoder': 'castorini/ance-msmarco-passage',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.ance-otf.dl19.txt'),
     },
-    'DistilBERT-KD-TASB PRF': {
+    'DistilBERT-KD-TASB(PRF)': {
         'index': 'msmarco-passage-distilbert-dot-tas_b-b256-bf',
         'encoder': 'sebastian-hofstaetter/distilbert-dot-tas_b-b256-msmarco',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.distilbert-kd-tasb-otf.dl19.txt'),
         'prf_depth': 3,
         'prf_method': 'avg',
     },
-    'TCT-ColBERT PRF': {
+    'TCT-ColBERT(PRF)': {
         'index': 'msmarco-passage-tct_colbert-bf',
         'encoder': 'castorini/tct_colbert-msmarco',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
         'prf_depth': 3,
         'prf_method': 'avg',
     },
-    'TCT-ColBERTv2 PRF': {
+    'TCT-ColBERTv2(PRF)': {
         'index': 'msmarco-passage-tct_colbert-v2-hnp-bf',
         'encoder': 'castorini/tct_colbert-v2-hnp-msmarco',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
         'prf_depth': 3,
         'prf_method': 'avg',
     },
-    'ANCE PRF': {
+    'ANCE(PRF)': {
         'index': 'msmarco-passage-ance-bf',
         'encoder': 'castorini/ance-msmarco-passage',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.ance-otf.dl19.txt'),
@@ -102,10 +102,10 @@ LUCENE_BASELINES = {
 }
 PRF_BASELINES = {
     'BM25+RM3',
-    'DistilBERT-KD-TASB PRF',
-    'TCT-ColBERT PRF',
-    'TCT-ColBERTv2 PRF',
-    'ANCE PRF',
+    'DistilBERT-KD-TASB(PRF)',
+    'TCT-ColBERT(PRF)',
+    'TCT-ColBERTv2(PRF)',
+    'ANCE(PRF)',
 }
 
 
@@ -142,7 +142,7 @@ def latency(
         num_pseudo_queries: int = 8,
         num_pseudo_return_hits: int = 1000,
         pseudo_encoder_name: Union[str, List[str]] = "lucene",
-        doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
+        pseudo_doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
         max_passage: bool = False,
         max_passage_hits: int = 1000,
         num_repeat: int = 5,
@@ -159,7 +159,7 @@ def latency(
     :param num_pseudo_queries: Default num_pseudo_queries or set num_pseudo_queries.
     :param num_pseudo_return_hits: Default num_pseudo_return_hits or set num_pseudo_return_hits.
     :param pseudo_encoder_name: Path to query encoder pytorch checkpoint or hgf encoder model name
-    :param doc_index: the index of the candidate documents
+    :param pseudo_doc_index: the index of the candidate documents
     :param max_passage: Select only max passage from document.
     :param max_passage_hits: Final number of hits when selecting only max passage.
     :param num_repeat: num of times for repeat measure latency.
@@ -194,7 +194,7 @@ def latency(
         metric, latency = measure(
             num_repeat, metric_name,
             search=search_func,
-            key_filter=lambda key: ("faiss.py" in key and 'faiss_search' in key) or ("lucene.py" in key and 'lucene_search' in key),
+            key_filter=lambda key: ("dense.py" in key and 'faiss_search' in key) or ("sparse.py" in key and 'lucene_search' in key),
         )
 
         statistics[name] = [metric, latency / query_length]
@@ -206,7 +206,7 @@ def latency(
         "pseudo_encoder_name": pseudo_encoder_name,
         "num_pseudo_queries": num_pseudo_queries,
         "num_pseudo_return_hits": num_pseudo_return_hits,
-        "doc_index": doc_index,
+        "pseudo_doc_index": pseudo_doc_index,
         "threads": threads,
         "batch_size": batch_size,
         "max_passage": max_passage,
@@ -214,12 +214,45 @@ def latency(
         "print_result": False,
     }
 
+    # Measure "Ours"
     metric, latency = measure(
         num_repeat, metric_name,
         search=lambda: search(**kargs)[-1],
         key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
     )
     statistics["Ours"] = [metric, latency / query_length]
+
+    # Measure "Ours(PRF)"
+    kargs['pseudo_prf_depth'] = 3
+    kargs['pseudo_prf_method'] = 'avg'
+    metric, latency = measure(
+        num_repeat, metric_name,
+        search=lambda: search(**kargs)[-1],
+        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
+    )
+    statistics["Ours(PRF)"] = [metric, latency / query_length]
+
+    # Measure "Ours(Expand)"
+    kargs['pseudo_prf_depth'] = 0
+    kargs['query_index'] = 'msmarco-v1-passage-d2q-t5-docvectors'
+    kargs['query_rm3'] = True
+    kargs['query_k1'] = 0.9
+    kargs['query_b'] = 0.4
+    metric, latency = measure(
+        num_repeat, metric_name,
+        search=lambda: search(**kargs)[-1],
+        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
+    )
+    statistics["Ours(Expand)"] = [metric, latency / query_length]
+
+    # Measure "Ours(Full)"
+    kargs['pseudo_prf_depth'] = 3
+    metric, latency = measure(
+        num_repeat, metric_name,
+        search=lambda: search(**kargs)[-1],
+        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
+    )
+    statistics["Ours(Full)"] = [metric, latency / query_length]
 
     with open(os.path.join(output_path, "statistics.latency.json"), "w") as f:
         f.write(json.dumps(statistics, indent=4, sort_keys=True))
@@ -233,7 +266,7 @@ def latency(
         elif name in LUCENE_BASELINES:
             arc = "Sparse Retrieval"
         else:
-            arc = name
+            arc = "Ours"
 
         data.loc[i] = [map, latency, arc]
         i += 1

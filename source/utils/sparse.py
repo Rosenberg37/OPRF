@@ -31,6 +31,8 @@ class LuceneBatchSearcher:
             self,
             index_dir: str,
             rm3: bool = False,
+            k1: float = None,
+            b: float = None,
             rocchio: bool = False,
             rocchio_use_negative: bool = False,
             impact: bool = False,
@@ -49,7 +51,7 @@ class LuceneBatchSearcher:
                 # create searcher from prebuilt index name
                 self.searcher = LuceneSearcher.from_prebuilt_index(index_dir)
 
-            self.set_bm25_parameters(self.searcher, index_dir)
+            self.set_bm25_parameters(self.searcher, index_dir, k1=k1, b=b)
 
         if rm3:
             self.searcher.set_rm3()
@@ -61,7 +63,7 @@ class LuceneBatchSearcher:
                 self.searcher.set_rocchio()
 
     @staticmethod
-    def set_bm25_parameters(searcher, index=None, k1=2.56, b=0.59):
+    def set_bm25_parameters(searcher, index=None, k1=None, b=None):
         if index is not None:
             # Automatically set bm25 parameters based on known index...
             if index == 'msmarco-passage' or index == 'msmarco-passage-slim' or index == 'msmarco-v1-passage' or \
@@ -93,6 +95,11 @@ class LuceneBatchSearcher:
                 # See https://github.com/castorini/anserini/blob/master/docs/regressions-msmarco-doc-segmented-docTTTTTquery.md
                 searcher.set_bm25(2.56, 0.59)
 
+        if k1 is None:
+            k1 = 2.56
+        if b is None:
+            b = 0.59
+
         searcher.set_bm25(k1, b)
 
     def batch_search(
@@ -101,7 +108,6 @@ class LuceneBatchSearcher:
             qids: List[str],
             k: int = 10,
             threads: int = 1,
-            add_query_to_pseudo: bool = False,
     ) -> BatchSearchResult:
         if k <= 0:
             print("Warning, num_pseudo_queries less or equal zero, set pseudo query directly to be query.")
@@ -119,11 +125,6 @@ class LuceneBatchSearcher:
                         json.loads(hit.raw)['contents'] if hit.raw else None
                     ) for hit in hits
                 ]
-
-            if add_query_to_pseudo:
-                for contents, qid in zip(queries, qids):
-                    query_score = max(hit.score for hit in batch_hits[qid])
-                    batch_hits[qid].append(SearchResult(qid, query_score, contents))
 
         return batch_hits
 
