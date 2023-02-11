@@ -81,6 +81,7 @@ class PseudoQuerySearcher:
             batch_qids: List[str],
             num_pseudo_queries: int = 4,
             num_pseudo_return_hits: int = 1000,
+            use_cache: bool = True,
             threads: int = 1,
     ) -> Union[BatchSearchResult, Tuple[BatchSearchResult, BatchSearchResult]]:
         """Search the collection concurrently for multiple queries, using multiple threads.
@@ -95,6 +96,8 @@ class PseudoQuerySearcher:
             Number of buffer to return.
         num_pseudo_return_hits: int
             Number of hits to return by each pseudo query.
+        use_cache : int
+            whether the cached result is used for searching
         threads : int
             Maximum number of threads to use.
 
@@ -121,7 +124,8 @@ class PseudoQuerySearcher:
         total_doc_hits = self.searcher_doc.batch_search(
             pseudo_texts, pseudo_ids,
             k=num_pseudo_return_hits,
-            threads=threads
+            threads=threads,
+            use_cache=use_cache,
         )  # hits of pseudo query, result in documents
 
         # min-max normalization

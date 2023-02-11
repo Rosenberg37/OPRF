@@ -191,6 +191,7 @@ class FaissBatchSearcher:
             queries: Union[List[str], np.ndarray],
             q_ids: List[str],
             k: int = 10,
+            use_cache: bool = True,
             threads: int = 1,
     ) -> Dict[str, List[SearchResult]]:
         """
@@ -203,6 +204,8 @@ class FaissBatchSearcher:
             List of corresponding query ids.
         k : int
             Number of hits to return.
+        use_cache : int
+            whether the cached result is used for searching
         threads : int
             Maximum number of threads to use.
 
@@ -217,7 +220,7 @@ class FaissBatchSearcher:
         search_queries, search_q_ids = list(), list()
         for q_id, query in zip(q_ids, queries):
             result = self.cache.get(q_id, None)
-            if result is not None and len(result) >= k:
+            if use_cache and result is not None and len(result) >= k:
                 batch_hits[q_id] = result[:k]
             else:
                 search_q_ids.append(q_id)

@@ -30,6 +30,7 @@ def search(
         num_pseudo_queries: int = 8,
         num_pseudo_return_hits: int = 1000,
         pseudo_encoder_name: Union[str, List[str]] = "lucene",
+        pseudo_doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
         pseudo_prf_depth: int = 0,
         pseudo_prf_method: str = 'avg',
         pseudo_rocchio_alpha: float = 0.9,
@@ -43,7 +44,6 @@ def search(
         query_rm3: bool = False,
         query_rocchio: bool = False,
         query_rocchio_use_negative: bool = False,
-        pseudo_doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
         num_return_hits: int = 1000,
         max_passage: bool = False,
         max_passage_hits: int = 1000,
@@ -52,6 +52,7 @@ def search(
         reference_name: str = None,
         metrics: List[str] = None,
         print_result: bool = True,
+        use_cache: bool = True,
         threads: int = cpu_count(),
         batch_size: int = cpu_count(),
         device: str = "cpu",
@@ -85,6 +86,7 @@ def search(
     :param reference_name: Reference name left for the evaluation of p-value
     :param metrics: metrics that play evaluation on.
     :param print_result: whether print the evaluation result.
+    :param use_cache: whether we use cached score
     :param threads: maximum threads to use during search
     :param batch_size: batch size used for the batch search.
     :param device: the device the whole search procedure will on
@@ -158,6 +160,7 @@ def search(
                 batch_queries, batch_qids,
                 num_pseudo_queries=num_pseudo_queries,
                 num_pseudo_return_hits=num_pseudo_return_hits,
+                use_cache=use_cache,
                 threads=threads,
             )
 

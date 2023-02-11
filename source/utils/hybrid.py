@@ -51,6 +51,7 @@ class HybridBatchSearcher:
             queries: List[str],
             q_ids: List[str],
             k: int = 10,
+            use_cache: bool = False,
             threads: int = 1,
     ) -> Dict[Tuple[str, str], List[SearchResult]]:
         """
@@ -63,6 +64,8 @@ class HybridBatchSearcher:
             List of corresponding query ids.
         k : int
             Number of hits to return.
+        use_cache : int
+            whether the cached result is used for searching
         threads : int
             Maximum number of threads to use.
 
@@ -74,7 +77,7 @@ class HybridBatchSearcher:
         threads = min(len(queries), threads)
         final_hits = dict()
         for name, searcher in zip(self.encoder_names, self.searchers):
-            batch_hits = searcher.batch_search(queries, q_ids, k=k, threads=threads)
+            batch_hits = searcher.batch_search(queries, q_ids, k=k, use_cache=use_cache, threads=threads)
             for q_id, hits in batch_hits.items():
                 final_hits[q_id, name] = hits
 

@@ -17,6 +17,7 @@ from typing import Callable, List, Mapping, Union
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+from adjustText import adjust_text
 from jsonargparse import CLI
 from pyserini.query_iterator import get_query_iterator, TopicsFormat
 
@@ -110,10 +111,11 @@ PRF_BASELINES = {
 
 
 def measure(
-        num_repeat: int,
-        metric_name: str,
         search: Callable,
         key_filter: Callable,
+        num_repeat: int = 1,
+        metric_name: str = None,
+        latency_pool: str = 'mid'
 ):
     metric, latencies = 0, list()
     for i in range(num_repeat):
@@ -128,11 +130,24 @@ def measure(
                     search_func_key = key
 
             latency = stats.stats[search_func_key][3]
-            metric = metrics[metric_name]
+
+            if metric_name is None:
+                metric = metrics
+            elif type(metric_name) is List:
+                metric = [metrics[name] for name in metric_name]
+            else:
+                metric = metrics[metric_name]
+
             latencies.append(latency)
 
-    latencies = sorted(latencies)
-    return metric, latencies[num_repeat // 2]
+    if latency_pool == 'mid':
+        latency = sorted(latencies)[num_repeat // 2]
+    elif latency_pool == 'avg':
+        latency = sum(latencies) / len(latencies)
+    else:
+        latency = latencies
+
+    return metric, latency
 
 
 def latency(
@@ -176,29 +191,6 @@ def latency(
     query_length = len(query_iterator)
 
     statistics = dict()
-
-    baselines = {**LUCENE_BASELINES, **FAISS_BASELINES}
-    for name, kargs in baselines.items():
-        kargs['topic_name'] = topic_name
-        kargs['batch_size'] = batch_size
-        kargs['threads'] = threads
-        kargs['print_result'] = False
-
-        if name in FAISS_BASELINES:
-            search_func = lambda: faiss_main(device=device, **kargs)[-1]
-        elif name in LUCENE_BASELINES:
-            search_func = lambda: lucene_main(**kargs)[-1]
-        else:
-            raise RuntimeError(f"Unexpected {name}")
-
-        metric, latency = measure(
-            num_repeat, metric_name,
-            search=search_func,
-            key_filter=lambda key: ("dense.py" in key and 'faiss_search' in key) or ("sparse.py" in key and 'lucene_search' in key),
-        )
-
-        statistics[name] = [metric, latency / query_length]
-
     kargs = {
         "topic_name": topic_name,
         "pseudo_name": pseudo_name,
@@ -216,7 +208,8 @@ def latency(
 
     # Measure "Ours"
     metric, latency = measure(
-        num_repeat, metric_name,
+        num_repeat=num_repeat,
+        metric_name=metric_name,
         search=lambda: search(**kargs)[-1],
         key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
     )
@@ -226,7 +219,8 @@ def latency(
     kargs['pseudo_prf_depth'] = 3
     kargs['pseudo_prf_method'] = 'avg'
     metric, latency = measure(
-        num_repeat, metric_name,
+        num_repeat=num_repeat,
+        metric_name=metric_name,
         search=lambda: search(**kargs)[-1],
         key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
     )
@@ -239,7 +233,8 @@ def latency(
     kargs['query_k1'] = 0.9
     kargs['query_b'] = 0.4
     metric, latency = measure(
-        num_repeat, metric_name,
+        num_repeat=num_repeat,
+        metric_name=metric_name,
         search=lambda: search(**kargs)[-1],
         key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
     )
@@ -248,11 +243,58 @@ def latency(
     # Measure "Ours(Full)"
     kargs['pseudo_prf_depth'] = 3
     metric, latency = measure(
-        num_repeat, metric_name,
+        num_repeat=num_repeat,
+        metric_name=metric_name,
         search=lambda: search(**kargs)[-1],
         key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
     )
     statistics["Ours(Full)"] = [metric, latency / query_length]
+
+    # Measure "Fusion"
+    kargs['pseudo_prf_depth'] = 0
+    kargs['num_pseudo_queries'] = 0
+    kargs['query_index'] = None
+    kargs['use_cache'] = False
+    metric, latency = measure(
+        num_repeat=num_repeat,
+        metric_name=metric_name,
+        search=lambda: search(**kargs)[-1],
+        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
+    )
+    statistics["Fusion"] = [metric, latency / query_length]
+
+    # Measure "Fusion(PRF)"
+    kargs['pseudo_prf_depth'] = 3
+    metric, latency = measure(
+        num_repeat=num_repeat,
+        metric_name=metric_name,
+        search=lambda: search(**kargs)[-1],
+        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
+    )
+    statistics["Fusion(PRF)"] = [metric, latency / query_length]
+
+    baselines = {**LUCENE_BASELINES, **FAISS_BASELINES}
+    for name, kargs in baselines.items():
+        kargs['topic_name'] = topic_name
+        kargs['batch_size'] = batch_size
+        kargs['threads'] = threads
+        kargs['print_result'] = False
+
+        if name in FAISS_BASELINES:
+            search_func = lambda: faiss_main(device=device, **kargs)[-1]
+        elif name in LUCENE_BASELINES:
+            search_func = lambda: lucene_main(**kargs)[-1]
+        else:
+            raise RuntimeError(f"Unexpected {name}")
+
+        metric, latency = measure(
+            num_repeat=num_repeat,
+            metric_name=metric_name,
+            search=search_func,
+            key_filter=lambda key: ("dense.py" in key and 'faiss_search' in key) or ("sparse.py" in key and 'lucene_search' in key),
+        )
+
+        statistics[name] = [metric, latency / query_length]
 
     with open(os.path.join(output_path, "statistics.latency.json"), "w") as f:
         f.write(json.dumps(statistics, indent=4, sort_keys=True))
@@ -272,8 +314,11 @@ def latency(
         i += 1
 
     sns.scatterplot(data=data, x=metric_name, y="Latency(s/query)", hue="Architecture", style="Architecture")
-    for name, (map, latency) in statistics.items():
-        plt.text(map - .008, latency + .005, name)
+    ax = plt.gca()
+    ax.invert_yaxis()
+
+    texts = [plt.text(map, latency, name) for name, (map, latency) in statistics.items()]
+    adjust_text(texts)
 
     plt.savefig(os.path.join(output_path, f"latency.pdf"))
     plt.show()

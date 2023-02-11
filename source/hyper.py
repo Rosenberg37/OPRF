@@ -7,13 +7,11 @@
 @Documentation: 
     ...
 """
-import cProfile
 import json
 import os
-import pstats
 from collections import OrderedDict
 from multiprocessing import cpu_count
-from typing import List, Mapping, Union
+from typing import List, Union
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -23,13 +21,55 @@ from pyserini.query_iterator import get_query_iterator, TopicsFormat
 from tqdm import tqdm
 
 from source import DEFAULT_CACHE_DIR
+from source.latency import measure
 from source.search import search
 from source.utils import QUERY_NAME_MAPPING
 
 PARAMETER_NAME_MAPPING = {
-    "num_pseudo_queries": "Number of pseudo-queries",
+    "num_pseudo_queries": "Number of pseudo-queries returned online",
     "num_pseudo_return_hits": "Number of returned pseudo hits",
 }
+
+
+def draw(parameter_name, statistics, second_statistics, second_name, second_measure_name=None, output_path=None):
+    data, i = pd.DataFrame(columns=[parameter_name, "metric", "Value"]), 0
+    for param, metrics in statistics.items():
+        for metric, value in metrics.items():
+            data.loc[i] = [param, metric, value]
+            i += 1
+    ax = sns.lineplot(data, x=parameter_name, y="Value", hue="metric", style="metric", markers=True, dashes=False)
+
+    if second_measure_name is not None:
+        second_full_name = f"{second_name}({second_measure_name})"
+    else:
+        second_full_name = second_name
+
+    data, i = pd.DataFrame(columns=[parameter_name, second_full_name]), 0
+    multiple = False
+    for param, values in second_statistics.items():
+        if type(values) is list:
+            for value in values:
+                data.loc[i] = [param, value]
+                i += 1
+            multiple = True
+        else:
+            data.loc[i] = [param, values]
+            i += 1
+
+    ax2 = ax.twinx()
+    if multiple:
+        sns.lineplot(data, x=parameter_name, y=second_full_name, color='grey', ax=ax2)
+    else:
+        sns.lineplot(data, x=parameter_name, y=second_full_name, color='grey', ax=ax2, markers=True, style=True, dashes=[(2, 2)])
+
+    handles, labels = ax.get_legend_handles_labels()
+    ax.get_legend().remove()
+    ax2.legend(handles + ax2.get_lines(), labels + [second_name])
+
+    if output_path is not None:
+        plt.savefig(output_path)
+
+    plt.show()
 
 
 def hyper(
@@ -45,10 +85,10 @@ def hyper(
         num_pseudo_return_hits_max: int = None,
         num_pseudo_return_hits_step: int = 50,
         pseudo_encoder_name: Union[str, List[str]] = "lucene",
-        doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
+        pseudo_doc_index: Union[str, List[str]] = 'msmarco-v1-passage-full',
         max_passage: bool = False,
         max_passage_hits: int = 1000,
-        num_repeat_latency: int = 5,
+        num_repeat: int = 5,
         metrics: List[str] = None,
         threads: int = cpu_count(),
         batch_size: int = cpu_count(),
@@ -70,10 +110,10 @@ def hyper(
     :param num_pseudo_return_hits_max: Same to num_pseudo_queries with only num_pseudo_return_hits.
     :param num_pseudo_return_hits_step: Same to num_pseudo_queries with only num_pseudo_return_hits.
     :param pseudo_encoder_name: Path to query encoder pytorch checkpoint or hgf encoder model name
-    :param doc_index: the index of the candidate documents
+    :param pseudo_doc_index: the index of the candidate documents
     :param max_passage: Select only max passage from document.
     :param max_passage_hits: Final number of hits when selecting only max passage.
-    :param num_repeat_latency: num of times for repeat measure latency.
+    :param num_repeat: num of times for repeat measure latency.
     :param metrics: metrics that play evaluation on.
     :param threads: maximum threads to use during search
     :param batch_size: batch size used for the batch search.
@@ -105,7 +145,7 @@ def hyper(
         "pseudo_encoder_name": pseudo_encoder_name,
         "num_pseudo_queries": num_pseudo_queries,
         "num_pseudo_return_hits": num_pseudo_return_hits,
-        "doc_index": doc_index,
+        "pseudo_doc_index": pseudo_doc_index,
         "threads": threads,
         "batch_size": batch_size,
         "device": device,
@@ -123,21 +163,15 @@ def hyper(
     statistics, latencies = OrderedDict(), OrderedDict()
     for param in tqdm(parameter_range):
         kargs[parameter_name] = param
-        latencies[param] = list()
 
-        for i in range(num_repeat_latency):
-            with cProfile.Profile() as profile:
-                metrics: Mapping[str, float] = search(**kargs)[2]
-                stats = pstats.Stats(profile)
-                stats.strip_dirs()
-
-                search_func_key = None
-                for key in stats.stats.keys():
-                    if "pseudo.py" in key and 'batch_search' in key:
-                        search_func_key = key
-
-                latencies[param].append(stats.stats[search_func_key][3] / query_length)
-                statistics[param] = metrics
+        metrics, latency = measure(
+            num_repeat=num_repeat,
+            latency_pool='none',
+            search=lambda: search(**kargs)[-1],
+            key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
+        )
+        latencies[param] = [l / query_length for l in latency]
+        statistics[param] = metrics
 
     statistics_name = f"statistics.{parameter_name}-{parameter_range.start}-{parameter_range.stop}-{-parameter_range.step}"
     with open(os.path.join(output_path, f"{statistics_name}.json"), "w") as f:
@@ -145,27 +179,14 @@ def hyper(
 
     parameter_name = PARAMETER_NAME_MAPPING[parameter_name]
 
-    data, i = pd.DataFrame(columns=[parameter_name, "metric", "Value"]), 0
-    for parameter, metrics in statistics.items():
-        for metric, value in metrics.items():
-            data.loc[i] = [parameter, metric, value]
-            i += 1
-    ax = sns.lineplot(data, x=parameter_name, y="Value", hue="metric", style="metric", markers=True, dashes=False)
-
-    data, i = pd.DataFrame(columns=[parameter_name, "Latency(s/query)"]), 0
-    for parameter, latency in latencies.items():
-        for l in latency:
-            data.loc[i] = [parameter, l]
-            i += 1
-    ax2 = ax.twinx()
-    sns.lineplot(data, x=parameter_name, y="Latency(s/query)", color='grey', ax=ax2)
-
-    handles, labels = ax.get_legend_handles_labels()
-    ax.get_legend().remove()
-    ax2.legend(handles + ax2.get_lines(), labels + ['Latency'])
-
-    plt.savefig(os.path.join(output_path, f"{statistics_name}.pdf"))
-    plt.show()
+    draw(
+        parameter_name,
+        statistics,
+        latencies,
+        second_name="Latency",
+        second_measure_name="s/query",
+        output_path=os.path.join(output_path, f"{statistics_name}.pdf")
+    )
 
 
 if __name__ == '__main__':
