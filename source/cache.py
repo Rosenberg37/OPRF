@@ -19,7 +19,7 @@ from pyserini.search import DenseVectorAveragePrf, DenseVectorRocchioPrf, FaissS
 from tqdm import tqdm
 
 from source import DEFAULT_CACHE_DIR, SearchResult
-from source.utils.dense import IMPACT_ENCODERS, init_query_encoder
+from source.utils.dense import FaissBatchSearcher, IMPACT_ENCODERS
 from source.utils.sparse import LuceneBatchSearcher
 
 
@@ -80,7 +80,7 @@ def cache(
         query_encoder = None
         searcher = LuceneBatchSearcher(prebuilt_index_name, impact=True, encoder_name=encoder_name)
     else:
-        query_encoder = init_query_encoder(encoder_name, device)
+        query_encoder = FaissBatchSearcher.init_query_encoder(encoder_name, device)
         searcher = FaissSearcher.from_prebuilt_index(prebuilt_index_name, query_encoder)
 
     # Check PRF Flag
@@ -103,6 +103,8 @@ def cache(
 
     # Set up cache
     cache = Cache(eviction_policy='none')
+
+    print(f"Run with {threads} threads.")
 
     # Build cache
     batch_queries, batch_qids = list(), list()

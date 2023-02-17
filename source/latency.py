@@ -48,28 +48,28 @@ FAISS_BASELINES = {
         'encoder': 'castorini/ance-msmarco-passage',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.ance-otf.dl19.txt'),
     },
-    'DistilBERT-KD-TASB(PRF)': {
+    'DistilBERT-KD-TASB(Avg)': {
         'index': 'msmarco-passage-distilbert-dot-tas_b-b256-bf',
         'encoder': 'sebastian-hofstaetter/distilbert-dot-tas_b-b256-msmarco',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.distilbert-kd-tasb-otf.dl19.txt'),
         'prf_depth': 3,
         'prf_method': 'avg',
     },
-    'TCT-ColBERT(PRF)': {
+    'TCT-ColBERT(Avg)': {
         'index': 'msmarco-passage-tct_colbert-bf',
         'encoder': 'castorini/tct_colbert-msmarco',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
         'prf_depth': 3,
         'prf_method': 'avg',
     },
-    'TCT-ColBERTv2(PRF)': {
+    'TCT-ColBERTv2(Avg)': {
         'index': 'msmarco-passage-tct_colbert-v2-hnp-bf',
         'encoder': 'castorini/tct_colbert-v2-hnp-msmarco',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.tct_colbert-v2-hnp-otf.dl19.txt'),
         'prf_depth': 3,
         'prf_method': 'avg',
     },
-    'ANCE(PRF)': {
+    'ANCE(Avg)': {
         'index': 'msmarco-passage-ance-bf',
         'encoder': 'castorini/ance-msmarco-passage',
         'output': os.path.join(DEFAULT_CACHE_DIR, 'runs', 'run.msmarco-v1-passage.ance-otf.dl19.txt'),
@@ -94,7 +94,7 @@ LUCENE_BASELINES = {
         'bm25': True,
         'output': 'run.msmarco-v1-passage.bm25-d2q-t5-default.dl19.txt'
     },
-    'uniCOIL': {
+    'uniCOIL+docT5query': {
         'index': 'msmarco-v1-passage-unicoil',
         'encoder': 'castorini/unicoil-msmarco-passage',
         'impact': True,
@@ -103,10 +103,10 @@ LUCENE_BASELINES = {
 }
 PRF_BASELINES = {
     'BM25+RM3',
-    'DistilBERT-KD-TASB(PRF)',
-    'TCT-ColBERT(PRF)',
-    'TCT-ColBERTv2(PRF)',
-    'ANCE(PRF)',
+    'DistilBERT-KD-TASB(Avg)',
+    'TCT-ColBERT(Avg)',
+    'TCT-ColBERTv2(Avg)',
+    'ANCE(Avg)',
 }
 
 
@@ -115,7 +115,6 @@ def measure(
         key_filter: Callable,
         num_repeat: int = 1,
         metric_name: str = None,
-        latency_pool: str = 'mid'
 ):
     metric, latencies = 0, list()
     for i in range(num_repeat):
@@ -140,14 +139,8 @@ def measure(
 
             latencies.append(latency)
 
-    if latency_pool == 'mid':
-        latency = sorted(latencies)[num_repeat // 2]
-    elif latency_pool == 'avg':
-        latency = sum(latencies) / len(latencies)
-    else:
-        latency = latencies
-
-    return metric, latency
+    truncate_point = num_repeat // 2 if num_repeat // 2 > 0 else 1
+    return metric, sum(sorted(latencies)[:truncate_point]) / truncate_point
 
 
 def latency(
@@ -196,17 +189,54 @@ def latency(
         "pseudo_name": pseudo_name,
         "pseudo_index_dir": pseudo_index_dir,
         "pseudo_encoder_name": pseudo_encoder_name,
-        "num_pseudo_queries": num_pseudo_queries,
+        "num_pseudo_queries": 0,
         "num_pseudo_return_hits": num_pseudo_return_hits,
         "pseudo_doc_index": pseudo_doc_index,
+        'pseudo_prf_depth': 0,
         "threads": threads,
         "batch_size": batch_size,
+        'use_cache': False,
         "max_passage": max_passage,
         "max_passage_hits": max_passage_hits,
         "print_result": False,
+        "device": device,
     }
 
+    # Measure "Fusion"
+    metric, latency = measure(
+        num_repeat=num_repeat,
+        metric_name=metric_name,
+        search=lambda: search(**kargs)[-1],
+        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
+    )
+    statistics["Fusion"] = [metric, latency / query_length]
+    print(f"Latency for Fusion: {latency / query_length}")
+
+    # Measure "Fusion(Avg)"
+    kargs['pseudo_prf_depth'] = 3
+    metric, latency = measure(
+        num_repeat=num_repeat,
+        metric_name=metric_name,
+        search=lambda: search(**kargs)[-1],
+        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
+    )
+    statistics["Fusion(Avg)"] = [metric, latency / query_length]
+    print(f"Latency for Fusion(Avg): {latency / query_length}")
+
+    # Measure "Ours(Avg)"
+    kargs['num_pseudo_queries'] = num_pseudo_queries
+    kargs['use_cache'] = True
+    metric, latency = measure(
+        num_repeat=num_repeat,
+        metric_name=metric_name,
+        search=lambda: search(**kargs)[-1],
+        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
+    )
+    statistics["Ours(Avg)"] = [metric, latency / query_length]
+    print(f"Latency for Ours(Avg): {latency / query_length}")
+
     # Measure "Ours"
+    kargs['pseudo_prf_depth'] = 0
     metric, latency = measure(
         num_repeat=num_repeat,
         metric_name=metric_name,
@@ -214,20 +244,9 @@ def latency(
         key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
     )
     statistics["Ours"] = [metric, latency / query_length]
+    print(f"Latency for Ours: {latency / query_length}")
 
-    # Measure "Ours(PRF)"
-    kargs['pseudo_prf_depth'] = 3
-    kargs['pseudo_prf_method'] = 'avg'
-    metric, latency = measure(
-        num_repeat=num_repeat,
-        metric_name=metric_name,
-        search=lambda: search(**kargs)[-1],
-        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
-    )
-    statistics["Ours(PRF)"] = [metric, latency / query_length]
-
-    # Measure "Ours(Expand)"
-    kargs['pseudo_prf_depth'] = 0
+    # Measure "Ours(extend)"
     kargs['query_index'] = 'msmarco-v1-passage-d2q-t5-docvectors'
     kargs['query_rm3'] = True
     kargs['query_k1'] = 0.9
@@ -238,7 +257,8 @@ def latency(
         search=lambda: search(**kargs)[-1],
         key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
     )
-    statistics["Ours(Expand)"] = [metric, latency / query_length]
+    statistics[r"Ours$^{\dagger}$"] = [metric, latency / query_length]
+    print(f"Latency for Ours(extend): {latency / query_length}")
 
     # Measure "Ours(Full)"
     kargs['pseudo_prf_depth'] = 3
@@ -248,30 +268,11 @@ def latency(
         search=lambda: search(**kargs)[-1],
         key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
     )
-    statistics["Ours(Full)"] = [metric, latency / query_length]
+    statistics[r"Ours$^{\dagger}$(Avg)"] = [metric, latency / query_length]
+    print(f"Latency for Ours(Full): {latency / query_length}")
 
-    # Measure "Fusion"
-    kargs['pseudo_prf_depth'] = 0
-    kargs['num_pseudo_queries'] = 0
-    kargs['query_index'] = None
-    kargs['use_cache'] = False
-    metric, latency = measure(
-        num_repeat=num_repeat,
-        metric_name=metric_name,
-        search=lambda: search(**kargs)[-1],
-        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
-    )
-    statistics["Fusion"] = [metric, latency / query_length]
-
-    # Measure "Fusion(PRF)"
-    kargs['pseudo_prf_depth'] = 3
-    metric, latency = measure(
-        num_repeat=num_repeat,
-        metric_name=metric_name,
-        search=lambda: search(**kargs)[-1],
-        key_filter=lambda key: "pseudo.py" in key and 'batch_search' in key,
-    )
-    statistics["Fusion(PRF)"] = [metric, latency / query_length]
+    with open(os.path.join(output_path, "statistics.latency.json"), "w") as f:
+        f.write(json.dumps(statistics, indent=4, sort_keys=True))
 
     baselines = {**LUCENE_BASELINES, **FAISS_BASELINES}
     for name, kargs in baselines.items():
@@ -295,15 +296,13 @@ def latency(
         )
 
         statistics[name] = [metric, latency / query_length]
-
-    with open(os.path.join(output_path, "statistics.latency.json"), "w") as f:
-        f.write(json.dumps(statistics, indent=4, sort_keys=True))
+        print(f"Latency for {name}: {latency / query_length}")
 
     data, i = pd.DataFrame(columns=[metric_name, "Latency(s/query)", "Architecture"]), 0
     for name, (map, latency) in statistics.items():
-        if name in PRF_BASELINES:
+        if name in PRF_BASELINES or name == "Fusion(Avg)":
             arc = "Pseudo Relevance Feedback"
-        elif name in FAISS_BASELINES:
+        elif name in FAISS_BASELINES or name == "Fusion":
             arc = "Dense Retrieval"
         elif name in LUCENE_BASELINES:
             arc = "Sparse Retrieval"
@@ -313,9 +312,9 @@ def latency(
         data.loc[i] = [map, latency, arc]
         i += 1
 
-    sns.scatterplot(data=data, x=metric_name, y="Latency(s/query)", hue="Architecture", style="Architecture")
-    ax = plt.gca()
+    ax = sns.scatterplot(data=data, x=metric_name, y="Latency(s/query)", hue="Architecture", style="Architecture")
     ax.invert_yaxis()
+    ax.legend().set_title('')
 
     texts = [plt.text(map, latency, name) for name, (map, latency) in statistics.items()]
     adjust_text(texts)

@@ -95,7 +95,7 @@ def index(
         f.write(json.dumps(statistics, indent=4, sort_keys=True))
 
     draw(
-        parameter_name="Number of generated pseudo-queries per query",
+        parameter_name="Number of generated pseudo-queries per document",
         statistics=statistics,
         second_statistics=lines,
         second_name="Pseudo-queries per document",
