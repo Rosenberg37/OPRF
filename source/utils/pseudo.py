@@ -75,6 +75,75 @@ class PseudoQuerySearcher:
             cache_base_dir=cache_dir,
         )
 
+    def _aggregate(self, total_doc_hits, batch_pseudo_hits):
+        # Aggregate and generate final results
+        encoder_names = self.searcher_doc.encoder_names
+        encoder_names_len = len(encoder_names)
+
+        batch_final_hits: BatchSearchResult = dict()
+        for query_id, pseudo_hits in batch_pseudo_hits.items():
+            pseudo_ids, pseudo_texts, pseudo_scores = list(), list(), list()
+            for pseudo_hit in pseudo_hits:
+                pseudo_ids.append(pseudo_hit.docid)
+                pseudo_texts.append(pseudo_hit.contents)
+                pseudo_scores.append(pseudo_hit.score)
+
+            doc_ids, doc_score_mappings = set(), list()
+            for pseudo_id in pseudo_ids:
+                if len(pseudo_ids) > 1 and pseudo_id == query_id:  # len(pseudo_ids) = 1 means original query directly used
+                    mapping = dict()
+                    for doc_hit in total_doc_hits[pseudo_id]:
+                        doc_id, doc_score = doc_hit.docid, doc_hit.score
+                        doc_ids.add(doc_hit.docid)
+                        mapping[doc_id] = doc_score
+                    doc_score_mappings.append(mapping)
+                else:
+                    for name in encoder_names:
+                        mapping = dict()
+                        for doc_hit in total_doc_hits[pseudo_id, name]:
+                            doc_id, doc_score = doc_hit.docid, doc_hit.score
+                            doc_ids.add(doc_hit.docid)
+                            mapping[doc_id] = doc_score
+                        doc_score_mappings.append(mapping)
+
+            if self.searcher_query is not None:
+                pseudo_scores = np.asarray(pseudo_scores[:-1] * encoder_names_len + [pseudo_scores[-1]])
+            else:
+                pseudo_scores = np.asarray(pseudo_scores).repeat(encoder_names_len)
+            doc_scores = np.asarray([
+                [
+                    mapping.get(id, 0)
+                    for id in doc_ids
+                ] for mapping in doc_score_mappings
+            ])
+
+            # Aggregation
+            pseudo_scores = np.expand_dims(softmax(pseudo_scores, axis=0), axis=1)
+            doc_scores = np.sum(doc_scores * pseudo_scores, axis=0)
+
+            final_hits = [SearchResult(doc_id, doc_score, None) for doc_id, doc_score in zip(doc_ids, doc_scores)]
+            final_hits = sorted(final_hits, key=lambda hit: hit.score, reverse=True)
+            batch_final_hits[query_id] = final_hits
+
+        return batch_final_hits
+
+    @staticmethod
+    def _min_max_norm(total_doc_hits):
+        # min-max normalization
+        for key, doc_hits in total_doc_hits.items():
+            max_score, min_score = -1e8, 1e8
+            for doc_hit in doc_hits:
+                doc_score = doc_hit.score
+                if doc_score < min_score:
+                    min_score = doc_score
+                if doc_score > max_score:
+                    max_score = doc_score
+
+            norm = max_score - min_score
+            for doc_hit in doc_hits:
+                doc_hit.score = (doc_hit.score - min_score) / norm
+        return total_doc_hits
+
     def batch_search(
             self,
             batch_queries: List[str],
@@ -128,19 +197,7 @@ class PseudoQuerySearcher:
             use_cache=use_cache,
         )  # hits of pseudo query, result in documents
 
-        # min-max normalization
-        for key, doc_hits in total_doc_hits.items():
-            max_score, min_score = -1e8, 1e8
-            for doc_hit in doc_hits:
-                doc_score = doc_hit.score
-                if doc_score < min_score:
-                    min_score = doc_score
-                if doc_score > max_score:
-                    max_score = doc_score
-
-            norm = max_score - min_score
-            for doc_hit in doc_hits:
-                doc_hit.score = (doc_hit.score - min_score) / norm
+        total_doc_hits = self._min_max_norm(total_doc_hits)
 
         if self.searcher_query is not None:
             batch_doc_hits = self.searcher_query.batch_search(
@@ -154,53 +211,6 @@ class PseudoQuerySearcher:
                 batch_pseudo_hits[qid].append(SearchResult(qid, score, query))
                 total_doc_hits[qid] = batch_doc_hits[qid]
 
-        encoder_names = self.searcher_doc.encoder_names
-        encoder_names_len = len(encoder_names)
-
-        # Aggregate and generate final results
-        batch_final_hits: BatchSearchResult = dict()
-        for query_id, pseudo_hits in batch_pseudo_hits.items():
-            pseudo_ids, pseudo_texts, pseudo_scores = list(), list(), list()
-            for pseudo_hit in pseudo_hits:
-                pseudo_ids.append(pseudo_hit.docid)
-                pseudo_texts.append(pseudo_hit.contents)
-                pseudo_scores.append(pseudo_hit.score)
-
-            doc_ids, doc_score_mappings = set(), list()
-            for pseudo_id in pseudo_ids:
-                if len(pseudo_ids) > 1 and pseudo_id == query_id:  # len(pseudo_ids) = 1 means original query directly used
-                    mapping = dict()
-                    for doc_hit in total_doc_hits[pseudo_id]:
-                        doc_id, doc_score = doc_hit.docid, doc_hit.score
-                        doc_ids.add(doc_hit.docid)
-                        mapping[doc_id] = doc_score
-                    doc_score_mappings.append(mapping)
-                else:
-                    for name in encoder_names:
-                        mapping = dict()
-                        for doc_hit in total_doc_hits[pseudo_id, name]:
-                            doc_id, doc_score = doc_hit.docid, doc_hit.score
-                            doc_ids.add(doc_hit.docid)
-                            mapping[doc_id] = doc_score
-                        doc_score_mappings.append(mapping)
-
-            if self.searcher_query is not None:
-                pseudo_scores = np.asarray(pseudo_scores[:-1] * encoder_names_len + [pseudo_scores[-1]])
-            else:
-                pseudo_scores = np.asarray(pseudo_scores).repeat(encoder_names_len)
-            doc_scores = np.asarray([
-                [
-                    mapping.get(id, 0)
-                    for id in doc_ids
-                ] for mapping in doc_score_mappings
-            ])
-
-            # Aggregation
-            pseudo_scores = np.expand_dims(softmax(pseudo_scores, axis=0), axis=1)
-            doc_scores = np.sum(doc_scores * pseudo_scores, axis=0)
-
-            final_hits = [SearchResult(doc_id, doc_score, None) for doc_id, doc_score in zip(doc_ids, doc_scores)]
-            final_hits = sorted(final_hits, key=lambda hit: hit.score, reverse=True)
-            batch_final_hits[query_id] = final_hits
+        batch_final_hits = self._aggregate(total_doc_hits, batch_pseudo_hits)
 
         return batch_final_hits, batch_pseudo_hits
