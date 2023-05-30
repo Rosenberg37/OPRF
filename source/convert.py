@@ -5,7 +5,7 @@
 @Author:    Rosenberg
 @Date:      2022/12/9 8:43 
 @Documentation: 
-    ...
+    converting a pseudo-queries dataset in huggingface to a jsonline file.
 """
 import hashlib
 import json
@@ -24,6 +24,14 @@ def convert_dataset_to_jsonl(
         queries_num: int = -1,
         output_name: str = None,
 ):
+    """
+    converting process will deduplicate the pseudo-queries set.
+    :param dataset_name: dataset name of pseudo-queries in huggingface datasets hub.
+        If this arg is a List, multiple pseudo-queries datasets will be combined.
+    :param queries_num: how many pseudo-queries per queries will be selected, -1 means all.
+    :param output_name: name of output file, default in 'DEFAULT_CACHE_DIR'/runs/pseudo_queries
+    :return:
+    """
     if output_name is None:
         if type(dataset_name) is str:
             output_name = f"{dataset_name.split('/')[-1]}_{queries_num}"
