@@ -59,3 +59,16 @@ python source\search.py --topic_name=dl19-passage \
 ```
 For all models in the experiment are reused the implement in the pyserini.
 
+## Reference
+
+If you have any questions related to the code or the paper or the copyright, please email `wenxueru2022@iscas.ac.cn`. We would appreciate it if you cite our paper as following:
+
+```
+@inproceedings{wen2023offline,
+  title={Offline Pseudo Relevance Feedback for Efficient and Effective Single-pass Dense Retrieval},
+  author={Wen, Xueru and Chen, Xiaoyang and Chen, Xuanang and He, Ben and Sun, Le},
+  booktitle={Proceedings of the 46th International ACM SIGIR Conference on Research and Development in Information Retrieval},
+  pages={2209--2214},
+  year={2023}
+}
+```
